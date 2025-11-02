@@ -1,20 +1,7 @@
 import * as React from 'react';
-import { Check, ChevronsUpDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Input } from '@/components/ui/input';
 
 function SearchableSelect({
   value,
@@ -29,91 +16,179 @@ function SearchableSelect({
   renderValue,
 }) {
   const [open, setOpen] = React.useState(false);
-  const [width, setWidth] = React.useState(0);
-  const triggerRef = React.useRef(null);
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const containerRef = React.useRef(null);
+  const listId = React.useId();
+
+  const selectedOption = React.useMemo(
+    () => options.find((option) => option.value === value) || null,
+    [options, value]
+  );
+
+  const displayValue = React.useMemo(() => {
+    if (!selectedOption) {
+      return '';
+    }
+    if (typeof renderValue === 'function') {
+      const rendered = renderValue(selectedOption);
+      return typeof rendered === 'string' ? rendered : selectedOption.label || '';
+    }
+    return selectedOption.label || '';
+  }, [renderValue, selectedOption]);
 
   React.useEffect(() => {
-    if (triggerRef.current) {
-      setWidth(triggerRef.current.offsetWidth);
+    if (!open) {
+      setSearchTerm('');
     }
-  }, []);
+  }, [open]);
 
-  const selectedOption = options.find((option) => option.value === value);
-  const displayValue = renderValue
-    ? renderValue(selectedOption)
-    : selectedOption?.label || placeholder;
+  React.useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
 
-  const handleOpenChange = React.useCallback((newOpen) => {
-    setOpen(newOpen);
-  }, []);
+    const handleClickAway = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickAway);
+    document.addEventListener('touchstart', handleClickAway);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickAway);
+      document.removeEventListener('touchstart', handleClickAway);
+    };
+  }, [open]);
+
+  React.useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
+
+  const filteredOptions = React.useMemo(() => {
+    if (!searchTerm) {
+      return options;
+    }
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return options.filter((option) => {
+      const label = option.label?.toLowerCase() || '';
+      const searchText = option.searchText?.toLowerCase() || '';
+      return label.includes(normalizedSearch) || searchText.includes(normalizedSearch);
+    });
+  }, [options, searchTerm]);
+
+  const handleSelect = React.useCallback(
+    (optionValue) => {
+      const nextValue = optionValue === value ? '' : optionValue;
+      onValueChange(nextValue);
+      setOpen(false);
+      setSearchTerm('');
+    },
+    [onValueChange, value]
+  );
+
+  const handleFocus = React.useCallback(() => {
+    if (!disabled) {
+      setOpen(true);
+    }
+  }, [disabled]);
+
+  const handleInputChange = React.useCallback(
+    (event) => {
+      if (disabled) {
+        return;
+      }
+      if (!open) {
+        setOpen(true);
+      }
+      setSearchTerm(event.target.value);
+    },
+    [disabled, open]
+  );
+
+  const handleKeyDown = React.useCallback(
+    (event) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        event.currentTarget.blur();
+      } else if (event.key === 'ArrowDown' && !open) {
+        event.preventDefault();
+        setOpen(true);
+      } else if (event.key === 'Enter' && open) {
+        event.preventDefault();
+        if (filteredOptions.length > 0) {
+          handleSelect(filteredOptions[0].value);
+        }
+      }
+    },
+    [filteredOptions, handleSelect, open]
+  );
+
+  const inputValue = open ? searchTerm : displayValue;
+  const inputPlaceholder = open ? searchPlaceholder : placeholder;
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          ref={triggerRef}
-          type="button"
-          role="combobox"
-          aria-expanded={open}
+    <div ref={containerRef} className={cn('relative', className)}>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+        <Input
+          value={inputValue}
+          placeholder={inputPlaceholder}
+          onFocus={handleFocus}
+          onClick={handleFocus}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          readOnly={disabled}
           disabled={disabled}
-          variant="outline"
+          aria-expanded={open}
+          aria-controls={listId}
+          role="combobox"
           className={cn(
-            'w-full justify-between',
-            !value && 'text-muted-foreground',
-            className
+            'w-full cursor-text pl-9 pr-9',
+            !displayValue && !open && 'placeholder:text-muted-foreground'
           )}
+        />
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+      </div>
+
+      {open ? (
+        <div
+          id={listId}
+          role="listbox"
+          className="absolute z-50 mt-2 max-h-60 w-full overflow-auto rounded-lg border border-border bg-popover shadow-xl"
         >
-          <span className="truncate">{displayValue}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="p-0"
-        align="start"
-        style={{ width: width ? `${width}px` : 'auto', pointerEvents: 'auto' }}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <Command shouldFilter={true}>
-          <div className="flex items-center border-b border-border px-3">
-            <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-            <CommandInput
-              placeholder={searchPlaceholder}
-              className="h-11 border-0 focus:ring-0"
-            />
-          </div>
-          <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup className="max-h-64 overflow-auto">
-              {options.map((option) => (
-                <CommandItem
+          {filteredOptions.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-muted-foreground/70">{emptyText}</div>
+          ) : (
+            filteredOptions.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <button
                   key={option.value}
-                  value={option.label}
-                  keywords={[option.label, option.searchText].filter(Boolean)}
-                  onSelect={() => {
-                    onValueChange(option.value === value ? '' : option.value);
-                    setOpen(false);
-                  }}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    onValueChange(option.value === value ? '' : option.value);
-                    setOpen(false);
-                  }}
-                  className="cursor-pointer hover:bg-accent"
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => handleSelect(option.value)}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus:outline-none',
+                    isSelected ? 'bg-accent/40 text-foreground' : 'text-foreground/90'
+                  )}
                 >
-                  <Check
-                    className={cn(
-                      'mr-2 h-4 w-4',
-                      value === option.value ? 'opacity-100' : 'opacity-0'
-                    )}
-                  />
-                  {renderOption ? renderOption(option) : option.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                  <span className="flex-1 truncate">
+                    {renderOption ? renderOption(option) : option.label}
+                  </span>
+                  {isSelected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
