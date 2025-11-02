@@ -19,7 +19,27 @@ const { subscribeToGenerationUpdates } = require('./generationEvents');
 const MAX_GENERATION_WAIT_TIME_MS = Number(process.env.STORYBOOK_PAGE_TIMEOUT_MS || 15 * 60 * 1000);
 const PAGE_CONCURRENCY = Math.max(
   1,
-  Number(process.env.STORYBOOK_PAGE_CONCURRENCY || 2)
+  Number(process.env.STORYBOOK_PAGE_CONCURRENCY || 5)
+);
+
+function toFiniteNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const STORYBOOK_PAGE_GENERATION_ATTEMPTS = Math.max(
+  1,
+  toFiniteNumber(process.env.STORYBOOK_PAGE_GENERATION_ATTEMPTS, 3)
+);
+
+const STORYBOOK_PAGE_RETRY_BASE_DELAY_MS = Math.max(
+  250,
+  toFiniteNumber(process.env.STORYBOOK_PAGE_RETRY_BASE_DELAY_MS, 1500)
+);
+
+const STORYBOOK_PAGE_RETRY_BACKOFF_FACTOR = Math.max(
+  1,
+  toFiniteNumber(process.env.STORYBOOK_PAGE_RETRY_BACKOFF_FACTOR, 2)
 );
 
 const generationWaiters = new Map();
@@ -158,6 +178,40 @@ const sanitizeCoverForSnapshot = (cover) => {
 
 const safeText = (value) => (typeof value === 'string' ? value : '');
 
+const normalizePromptText = (value) => (typeof value === 'string' ? value.trim() : '');
+
+const normalizeGenderValue = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const resolvePromptByGender = (source = {}, gender = '') => {
+  const male = normalizePromptText(
+    source.characterPromptMale || source.promptMale || source.malePrompt
+  );
+  const female = normalizePromptText(
+    source.characterPromptFemale || source.promptFemale || source.femalePrompt
+  );
+  const neutral = normalizePromptText(
+    source.characterPrompt || source.prompt || source.neutralPrompt
+  );
+  const normalizedGender = normalizeGenderValue(gender);
+
+  if (normalizedGender === 'male' && male) return male;
+  if (normalizedGender === 'female' && female) return female;
+  if (neutral) return neutral;
+  if (normalizedGender === 'male' && female) return female;
+  if (normalizedGender === 'female' && male) return male;
+  return neutral || male || female || '';
+};
+
+const hasAnyPrompt = (source = {}) => {
+  return Boolean(
+    normalizePromptText(source.characterPrompt) ||
+      normalizePromptText(source.characterPromptMale) ||
+      normalizePromptText(source.characterPromptFemale) ||
+      normalizePromptText(source.prompt)
+  );
+};
+
 const sanitizeCoverPageForSnapshot = (coverPage) => {
   if (!coverPage || typeof coverPage !== 'object') return null;
   const cloned = clonePlainObject(coverPage) || {};
@@ -166,7 +220,9 @@ const sanitizeCoverPageForSnapshot = (coverPage) => {
     characterImage: sanitizeAssetForSnapshot(cloned.characterImage),
     characterImageOriginal: sanitizeAssetForSnapshot(cloned.characterImageOriginal),
     qrCode: sanitizeAssetForSnapshot(cloned.qrCode),
-    characterPrompt: safeText(cloned.characterPrompt),
+    characterPrompt: normalizePromptText(cloned.characterPrompt),
+    characterPromptMale: normalizePromptText(cloned.characterPromptMale),
+    characterPromptFemale: normalizePromptText(cloned.characterPromptFemale),
     leftSide: {
       title: safeText(cloned.leftSide?.title),
       content: safeText(cloned.leftSide?.content),
@@ -189,7 +245,9 @@ const sanitizeDedicationForSnapshot = (dedicationPage) => {
     generatedImageOriginal: sanitizeAssetForSnapshot(cloned.generatedImageOriginal),
     title: safeText(cloned.title),
     secondTitle: safeText(cloned.secondTitle),
-    characterPrompt: safeText(cloned.characterPrompt),
+    characterPrompt: normalizePromptText(cloned.characterPrompt),
+    characterPromptMale: normalizePromptText(cloned.characterPromptMale),
+    characterPromptFemale: normalizePromptText(cloned.characterPromptFemale),
   };
 };
 
@@ -301,6 +359,12 @@ const registerGenerationWaiter = ({ generationId, jobId, pageId, pageOrder }) =>
     });
   });
 };
+
+const delay = (ms) =>
+  new Promise((resolve) => {
+    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+    setTimeout(resolve, safeMs);
+  });
 
 const waitForStandaloneGeneration = (generationId) => {
   const generationKey = String(generationId);
@@ -468,11 +532,15 @@ const copyAssetToBookCharacterSlot = async ({ book, page, asset }) => {
   const signedUrl = await getSignedUrlForKey(key).catch(() => uploadedUrl);
   console.log('[copyAssetToBookCharacterSlot] Got URL for Brio:', signedUrl ? 'Yes' : 'No');
 
-  // Step 3: Call Brio to remove background
+  // Step 3: Call Brio to remove background (skip for dedication pages)
   let processedBuffer = null;
   let backgroundRemoved = false;
 
-  if (asset.backgroundRemoved) {
+  if (page.pageType === 'dedication') {
+    console.log('[copyAssetToBookCharacterSlot] Dedication page - skipping background removal');
+    processedBuffer = originalBuffer;
+    backgroundRemoved = false;
+  } else if (asset.backgroundRemoved) {
     console.log('[copyAssetToBookCharacterSlot] Asset already has background removed, skipping Brio');
     processedBuffer = originalBuffer;
     backgroundRemoved = true;
@@ -590,7 +658,13 @@ const updateBookCharacterImage = async ({ bookId, page, newAsset, originalAsset 
   console.log('[updateBookCharacterImage] Saved to DB successfully');
 };
 
-const buildCoverPageContent = ({ book, readerName, storyPages = [], jobPage = null }) => {
+const buildCoverPageContent = ({
+  book,
+  readerName,
+  readerGender,
+  storyPages = [],
+  jobPage = null,
+}) => {
   const coverPage = sanitizeCoverPageForSnapshot(book.coverPage) || {};
 
   const firstStoryBackground = storyPages.find((page) =>
@@ -613,7 +687,8 @@ const buildCoverPageContent = ({ book, readerName, storyPages = [], jobPage = nu
 
   coverPage.characterImage = coverPage.characterImage || null;
   coverPage.characterImageOriginal = coverPage.characterImageOriginal || coverPage.characterImage || null;
-  coverPage.characterPrompt = safeText(coverPage.characterPrompt);
+  const coverPrompt = resolvePromptByGender(coverPage, readerGender);
+  coverPage.characterPrompt = coverPrompt;
 
   return {
     order: 0,
@@ -633,12 +708,18 @@ const buildCoverPageContent = ({ book, readerName, storyPages = [], jobPage = nu
     cover: null,
     coverPage,
     dedicationPage: null,
-    prompt: coverPage.characterPrompt || '',
+    prompt: coverPrompt || '',
     childName: readerName || '',
   };
 };
 
-const buildDedicationPageContent = ({ book, readerName, storyPages = [], jobPage = null }) => {
+const buildDedicationPageContent = ({
+  book,
+  readerName,
+  readerGender,
+  storyPages = [],
+  jobPage = null,
+}) => {
   const dedicationPage = sanitizeDedicationForSnapshot(book.dedicationPage) || {};
 
   const firstStoryBackground = storyPages.find((page) =>
@@ -670,7 +751,8 @@ const buildDedicationPageContent = ({ book, readerName, storyPages = [], jobPage
   dedicationPage.generatedImage = dedicationPage.generatedImage || dedicationPage.kidImage || null;
   dedicationPage.generatedImageOriginal =
     dedicationPage.generatedImageOriginal || dedicationPage.generatedImage || null;
-  dedicationPage.characterPrompt = safeText(dedicationPage.characterPrompt);
+  const dedicationPrompt = resolvePromptByGender(dedicationPage, readerGender);
+  dedicationPage.characterPrompt = dedicationPrompt;
 
   return {
     order: 0.5,
@@ -690,7 +772,7 @@ const buildDedicationPageContent = ({ book, readerName, storyPages = [], jobPage
     cover: null,
     coverPage: null,
     dedicationPage,
-    prompt: dedicationPage.characterPrompt || '',
+    prompt: dedicationPrompt || '',
     childName: readerName || '',
   };
 };
@@ -741,10 +823,12 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
     resolvedText = replaceReaderPlaceholders(resolvedText, readerName, readerGender);
   }
 
+  const resolvedPrompt = resolvePromptByGender(bookPage, readerGender);
+
   return {
     order: bookPage.order,
     text: resolvedText,
-    prompt: bookPage.characterPrompt || '',
+    prompt: resolvedPrompt,
     background: bookPage.backgroundImage || null,
     character: jobPage.characterAsset || bookPage.characterImage || null,
     characterOriginal:
@@ -842,6 +926,7 @@ const buildPdfAsset = async ({ book, job, pages }) => {
     storybookJobId: job._id || null,
     readerId: job.readerId || null,
     readerName: job.readerName || '',
+    readerGender: job.readerGender || '',
     userId: job.userId || null,
     variant: 'standard',
     derivedFromAssetId: null,
@@ -956,6 +1041,68 @@ const deriveWinnerAsset = (generation) => {
   };
 };
 
+const recordGenerationAttemptFailure = async ({
+  job,
+  page,
+  pageFilter,
+  attempt,
+  maxAttempts,
+  error,
+  isFinalAttempt,
+}) => {
+  const timestamp = new Date();
+  const safeMessage =
+    (error && typeof error.message === 'string' && error.message.trim()) ||
+    'Unknown error';
+
+  const baseMetadata = {
+    attempt,
+    maxAttempts,
+  };
+
+  const retryMessage = isFinalAttempt
+    ? `Generation failed after ${maxAttempts} attempts: ${safeMessage}`
+    : `Generation attempt ${attempt} of ${maxAttempts} failed: ${safeMessage}. Retrying...`;
+
+  const update = {
+    $set: {
+      'pages.$[page].error': safeMessage,
+      'pages.$[page].status': isFinalAttempt ? 'failed' : 'generating',
+      'pages.$[page].progress': isFinalAttempt
+        ? 0
+        : Math.min(95, Math.max(10, attempt * 10)),
+    },
+    $push: {
+      'pages.$[page].events': createEvent(
+        isFinalAttempt ? 'generation-failed' : 'generation-retry-scheduled',
+        retryMessage,
+        baseMetadata
+      ),
+    },
+  };
+
+  if (isFinalAttempt) {
+    update.$set['pages.$[page].completedAt'] = timestamp;
+    update.$push.events = createEvent(
+      'generation-failed',
+      `Generation failed for page ${page.order}: ${safeMessage}`,
+      baseMetadata
+    );
+  } else {
+    update.$push.events = createEvent(
+      'generation-retry-scheduled',
+      `Scheduled retry for page ${page.order} (attempt ${attempt + 1} of ${maxAttempts})`,
+      baseMetadata
+    );
+  }
+
+  await updateJobAndEmit({
+    jobId: job._id,
+    update,
+    arrayFilters: [pageFilter],
+  });
+};
+
 const processJobPage = async ({ job, page, book, training, readerName, readerGender }) => {
   const pageFilter = resolveArrayFilterForPage(page);
   const rawPrompt = page.prompt || page.text || '';
@@ -1027,139 +1174,166 @@ const processJobPage = async ({ job, page, book, training, readerName, readerGen
     pageOrder: page.order,
   };
 
-  const createdAt = new Date();
-  const generation = await Generation.create({
-    userId: job.userId,
-    trainingId: training._id,
-    modelVersion: training.modelVersion,
-    prompt: generationPrompt,
-    generationConfig: {
-      model: 'ranked',
-      mode: 'ranked',
-      goFast: Boolean(generationInput.go_fast),
-      loraScale: generationInput.lora_scale,
-      megapixels: generationInput.megapixels,
-      numOutputs: generationInput.num_outputs,
-      aspectRatio: generationInput.aspect_ratio || '1:1',
-      outputFormat: generationInput.output_format,
-      guidanceScale: generationInput.guidance_scale,
-      outputQuality: generationInput.output_quality,
-      promptStrength: generationInput.prompt_strength || 0.8,
-      extraLoraScale: generationInput.extra_lora_scale,
-      numInferenceSteps: generationInput.num_inference_steps,
-      pageOrder: page.order,
-    },
-    status: 'queued',
-    progress: 0,
-    attempts: 0,
-    replicateInput: generationInput,
-    storybookContext: {
-      jobId: job._id,
-      bookId: job.bookId,
-      pageId: page.pageId,
-      pageOrder: page.order,
-    },
-    events: [
-      {
-        type: 'created',
-        message: 'Storybook ranked generation queued',
-        metadata: {
-          jobId: job._id,
+  const maxAttempts = STORYBOOK_PAGE_GENERATION_ATTEMPTS;
+  const baseDelayMs = STORYBOOK_PAGE_RETRY_BASE_DELAY_MS;
+  const backoffFactor = STORYBOOK_PAGE_RETRY_BACKOFF_FACTOR;
+
+  let attempt = 0;
+  let lastError = null;
+  let finalWinner = null;
+  let finalCandidateAssets = [];
+  let finalGenerationId = null;
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    const isRetry = attempt > 1;
+    const createdAt = new Date();
+
+    try {
+      const generation = await Generation.create({
+        userId: job.userId,
+        trainingId: training._id,
+        modelVersion: training.modelVersion,
+        prompt: generationPrompt,
+        generationConfig: {
+          model: 'ranked',
+          mode: 'ranked',
+          goFast: Boolean(generationInput.go_fast),
+          loraScale: generationInput.lora_scale,
+          megapixels: generationInput.megapixels,
+          numOutputs: generationInput.num_outputs,
+          aspectRatio: generationInput.aspect_ratio || '1:1',
+          outputFormat: generationInput.output_format,
+          guidanceScale: generationInput.guidance_scale,
+          outputQuality: generationInput.output_quality,
+          promptStrength: generationInput.prompt_strength || 0.8,
+          extraLoraScale: generationInput.extra_lora_scale,
+          numInferenceSteps: generationInput.num_inference_steps,
           pageOrder: page.order,
         },
-        timestamp: createdAt,
-      },
-    ],
-  });
-
-  await updateJobAndEmit({
-    jobId: job._id,
-    update: {
-      $set: {
-        'pages.$[page].generationId': generation._id,
-      },
-      $push: {
-        events: createEvent('page-generation-created', `Generation created for page ${page.order}`, {
-          generationId: generation._id,
-        }),
-        'pages.$[page].events': createEvent(
-          'generation-created',
-          'Ranked generation created',
+        status: 'queued',
+        progress: 0,
+        attempts: 0,
+        replicateInput: generationInput,
+        storybookContext: {
+          jobId: job._id,
+          bookId: job.bookId,
+          pageId: page.pageId,
+          pageOrder: page.order,
+          attempt,
+          maxAttempts,
+        },
+        events: [
           {
-            generationId: generation._id,
-          }
-        ),
-      },
-    },
-    arrayFilters: [pageFilter],
-  });
+            type: 'created',
+            message: isRetry
+              ? `Storybook ranked generation retry queued (attempt ${attempt} of ${maxAttempts})`
+              : 'Storybook ranked generation queued',
+            metadata: {
+              jobId: job._id,
+              pageOrder: page.order,
+              attempt,
+              maxAttempts,
+            },
+            timestamp: createdAt,
+          },
+        ],
+      });
 
-  await broadcastGeneration(generation._id);
+      const attemptMetadata = {
+        generationId: generation._id,
+        attempt,
+        maxAttempts,
+      };
 
-  const generationPromise = waitForGeneration({
-    generationId: generation._id,
-    job,
-    page,
-  });
-
-  try {
-    await dispatchGenerationAttempt({
-      generationId: generation._id,
-      modelVersion: training.modelVersion,
-      input: generationInput,
-      reason: 'storybook-page',
-    });
-  } catch (error) {
-    await updateJobAndEmit({
-      jobId: job._id,
-      update: {
-        $set: {
-          'pages.$[page].status': 'failed',
-          'pages.$[page].error': error.message,
-          'pages.$[page].completedAt': new Date(),
+      await updateJobAndEmit({
+        jobId: job._id,
+        update: {
+          $set: {
+            'pages.$[page].generationId': generation._id,
+            'pages.$[page].status': 'generating',
+            'pages.$[page].progress': attempt === 1 ? 5 : Math.min(95, 5 + attempt * 10),
+          },
+          $push: {
+            events: createEvent(
+              isRetry ? 'page-generation-retry' : 'page-generation-created',
+              isRetry
+                ? `Retrying generation for page ${page.order} (attempt ${attempt} of ${maxAttempts})`
+                : `Generation created for page ${page.order}`,
+              attemptMetadata
+            ),
+            'pages.$[page].events': createEvent(
+              isRetry ? 'generation-retry' : 'generation-created',
+              isRetry
+                ? `Retrying ranked generation (attempt ${attempt} of ${maxAttempts})`
+                : 'Ranked generation created',
+              attemptMetadata
+            ),
+          },
         },
-        $push: {
-          'pages.$[page].events': createEvent(
-            'generation-dispatch-error',
-            `Failed to dispatch generation: ${error.message}`
-          ),
-        },
-      },
-      arrayFilters: [pageFilter],
-    });
-    throw error;
+        arrayFilters: [pageFilter],
+      });
+
+      await broadcastGeneration(generation._id);
+
+      await dispatchGenerationAttempt({
+        generationId: generation._id,
+        modelVersion: training.modelVersion,
+        input: generationInput,
+        reason: isRetry ? `storybook-page-retry-${attempt}` : 'storybook-page',
+      });
+
+      await waitForGeneration({
+        generationId: generation._id,
+        job,
+        page,
+      });
+
+      const populatedGeneration = await populateForClient(generation._id);
+      const winner = deriveWinnerAsset(populatedGeneration);
+      const candidateAssets = sanitizeAssetListForSnapshot(
+        populatedGeneration?.imageAssets || []
+      );
+
+      if (!winner || !winner.asset) {
+        throw new Error(`No winning asset found for page ${page.order}`);
+      }
+
+      finalGenerationId = generation._id;
+      finalWinner = winner;
+      finalCandidateAssets = candidateAssets;
+      break;
+    } catch (error) {
+      lastError = error;
+      console.warn(
+        `[processJobPage] attempt ${attempt} failed for page ${page.order}:`,
+        error.message
+      );
+      const isFinalAttempt = attempt >= maxAttempts;
+      await recordGenerationAttemptFailure({
+        job,
+        page,
+        pageFilter,
+        attempt,
+        maxAttempts,
+        error,
+        isFinalAttempt,
+      });
+      if (isFinalAttempt) {
+        throw error;
+      }
+      const backoffDelayMs = baseDelayMs * Math.pow(backoffFactor, attempt - 1);
+      await delay(backoffDelayMs);
+    }
   }
 
-  const finalGeneration = await generationPromise.catch(async (error) => {
-    await updateJobAndEmit({
-      jobId: job._id,
-      update: {
-        $set: {
-          'pages.$[page].status': 'failed',
-          'pages.$[page].error': error.message,
-          'pages.$[page].completedAt': new Date(),
-        },
-        $push: {
-          'pages.$[page].events': createEvent(
-            'generation-failed',
-            `Generation failed: ${error.message}`
-          ),
-        },
-      },
-      arrayFilters: [pageFilter],
-    });
-    throw error;
-  });
-
-  const populatedGeneration = await populateForClient(generation._id);
-  const winner = deriveWinnerAsset(populatedGeneration);
-  const candidateAssets = sanitizeAssetListForSnapshot(
-    populatedGeneration?.imageAssets || []
-  );
-
-  if (!winner || !winner.asset) {
-    throw new Error(`No winning asset found for page ${page.order}`);
+  if (!finalWinner || !finalWinner.asset) {
+    throw lastError || new Error(`No winning asset found for page ${page.order}`);
   }
+
+  const winner = finalWinner;
+  const candidateAssets = finalCandidateAssets;
+  const generationIdForPage = finalGenerationId;
 
   const bookCharacterAsset = await copyAssetToBookCharacterSlot({
     book,
@@ -1211,12 +1385,13 @@ const processJobPage = async ({ job, page, book, training, readerName, readerGen
         'pages.$[page].rankingNotes': winner.notes,
         'pages.$[page].progress': 100,
         'pages.$[page].candidateAssets': candidateAssets,
-        'pages.$[page].generationId': generation._id,
+        'pages.$[page].generationId': generationIdForPage,
         'pages.$[page].selectedCandidateIndex': winner.winner,
+        'pages.$[page].error': null,
       },
       $push: {
         'pages.$[page].events': createEvent('page-completed', 'Page generation completed', {
-          generationId: generation._id,
+          generationId: generationIdForPage,
           winner: winner.winner,
         }),
       },
@@ -1248,7 +1423,7 @@ const processStorybookJob = async (jobId) => {
 
   const reader = job.readerId ? await User.findById(job.readerId).select('name gender') : null;
   const readerName = job.readerName || reader?.name || '';
-  const readerGender = reader?.gender || '';
+  const readerGender = job.readerGender || reader?.gender || '';
 
   await updateJobAndEmit({
     jobId: job._id,
@@ -1362,6 +1537,7 @@ const processStorybookJob = async (jobId) => {
   const coverContent = buildCoverPageContent({
     book: refreshedBook,
     readerName,
+    readerGender,
     storyPages,
     jobPage: coverJobPage,
   });
@@ -1374,6 +1550,7 @@ const processStorybookJob = async (jobId) => {
   const dedicationContent = buildDedicationPageContent({
     book: refreshedBook,
     readerName,
+    readerGender,
     storyPages,
     jobPage: dedicationJobPage,
   });
@@ -1447,19 +1624,18 @@ const processStorybookJob = async (jobId) => {
   });
 };
 
-const formatBookPagesForJob = (book) => {
+const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
   const jobPages = [];
   const cover = book.coverPage || {};
   const dedication = book.dedicationPage || {};
 
-  const hasCoverFrontMatter =
-    Boolean(cover.backgroundImage) ||
-    Boolean((cover.characterPrompt || '').trim());
+  const coverPrompt = resolvePromptByGender(cover, readerGender);
+  const hasCoverFrontMatter = Boolean(cover.backgroundImage) || Boolean(coverPrompt?.trim());
   if (hasCoverFrontMatter) {
     jobPages.push({
       pageId: null,
       order: 0,
-      prompt: (cover.characterPrompt || '').trim(),
+      prompt: coverPrompt,
       text: '',
       pageType: 'cover',
       status: 'queued',
@@ -1468,14 +1644,14 @@ const formatBookPagesForJob = (book) => {
     });
   }
 
+  const dedicationPrompt = resolvePromptByGender(dedication, readerGender);
   const hasDedicationFrontMatter =
-    Boolean(dedication.backgroundImage) ||
-    Boolean((dedication.characterPrompt || '').trim());
+    Boolean(dedication.backgroundImage) || Boolean(dedicationPrompt?.trim());
   if (hasDedicationFrontMatter) {
     jobPages.push({
       pageId: null,
       order: hasCoverFrontMatter ? 0.5 : 0,
-      prompt: (dedication.characterPrompt || '').trim(),
+      prompt: dedicationPrompt,
       text: '',
       pageType: 'dedication',
       status: 'queued',
@@ -1490,7 +1666,7 @@ const formatBookPagesForJob = (book) => {
     .map((page) => ({
       pageId: page._id,
       order: page.order,
-      prompt: page.characterPrompt || '',
+      prompt: resolvePromptByGender(page, readerGender),
       text: page.text || '',
       backgroundImage: page.backgroundImage,
       pageType: page.pageType === 'cover' ? 'cover' : 'story',
@@ -1521,6 +1697,7 @@ const startStorybookAutomation = async ({
   userId,
   readerId,
   readerName,
+  readerGender,
   title,
 }) => {
   const book = await Book.findById(bookId);
@@ -1547,9 +1724,24 @@ const startStorybookAutomation = async ({
   }
 
   const resolvedReaderId = readerId || userId;
-  const resolvedReaderName = readerName || user.name || '';
+  let resolvedReaderName = readerName || user.name || '';
+  let resolvedReaderGender = normalizeGenderValue(readerGender) || normalizeGenderValue(user.gender);
 
-  const jobPages = formatBookPagesForJob(book);
+  if (resolvedReaderId) {
+    const readerDoc = await User.findById(resolvedReaderId).select('name gender');
+    if (readerDoc) {
+      if (!resolvedReaderName && readerDoc.name) {
+        resolvedReaderName = readerDoc.name;
+      }
+      if (!resolvedReaderGender && readerDoc.gender) {
+        resolvedReaderGender = normalizeGenderValue(readerDoc.gender);
+      }
+    }
+  }
+
+  const jobPages = formatBookPagesForJob(book, {
+    readerGender: resolvedReaderGender,
+  });
   if (!jobPages || jobPages.length === 0) {
     throw new Error('No valid pages to generate. All pages are missing content. Please add character prompts, page text, or background images to at least one page.');
   }
@@ -1560,6 +1752,7 @@ const startStorybookAutomation = async ({
     userId,
     readerId: resolvedReaderId,
     readerName: resolvedReaderName,
+    readerGender: resolvedReaderGender,
     title: title || `${book.name} Storybook`,
     status: 'queued',
     progress: 0,
@@ -1692,24 +1885,23 @@ const regenerateStorybookPage = async ({
     }
   }
 
-  const safePrompt = (value) => (typeof value === 'string' ? value.trim() : '');
   const safeTextValue = (value) => (typeof value === 'string' ? value : '');
 
   let promptSource = '';
   let fallbackText = '';
 
   if (targetPage) {
-    promptSource = safePrompt(targetPage.characterPrompt);
+    promptSource = resolvePromptByGender(targetPage, resolvedReaderGender);
     fallbackText = safeTextValue(targetPage.text);
   } else if (pageType === 'cover') {
     const coverCfg = book.coverPage || {};
-    promptSource = safePrompt(coverCfg.characterPrompt);
+    promptSource = resolvePromptByGender(coverCfg, resolvedReaderGender);
     if (!promptSource) {
       fallbackText = safeTextValue(coverCfg.leftSide?.content);
     }
   } else if (pageType === 'dedication') {
     const dedicationCfg = book.dedicationPage || {};
-    promptSource = safePrompt(dedicationCfg.characterPrompt);
+    promptSource = resolvePromptByGender(dedicationCfg, resolvedReaderGender);
     if (!promptSource) {
       fallbackText =
         safeTextValue(dedicationCfg.title) || safeTextValue(dedicationCfg.secondTitle);

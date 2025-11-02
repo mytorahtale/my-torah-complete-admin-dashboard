@@ -67,6 +67,8 @@ const createEmptyPage = () => ({
   pageType: 'story',
   text: '',
   prompt: '',
+  promptMale: '',
+  promptFemale: '',
   file: null,
   preview: null,
   previewIsObject: false,
@@ -123,6 +125,8 @@ const createEmptyBookForm = () => ({
       subtitle: '',
     },
     characterPrompt: '',
+    characterPromptMale: '',
+    characterPromptFemale: '',
   },
   dedicationPage: {
     backgroundImage: {
@@ -138,6 +142,8 @@ const createEmptyBookForm = () => ({
     title: '',
     secondTitle: '',
     characterPrompt: '',
+    characterPromptMale: '',
+    characterPromptFemale: '',
   },
 });
 
@@ -420,7 +426,9 @@ function Books() {
                 id: page._id || null,
                 pageType,
                 text: page.text || '',
-                prompt: page.characterPrompt || page.prompt || '',
+                prompt: page.characterPrompt || page.prompt || page.characterPromptMale || page.characterPromptFemale || '',
+                promptMale: page.characterPromptMale || page.characterPrompt || '',
+                promptFemale: page.characterPromptFemale || page.characterPrompt || '',
                 file: null,
                 preview: page.backgroundImage?.url || page.characterImage?.url || null,
                 previewIsObject: false,
@@ -472,7 +480,9 @@ function Books() {
           mainTitle: book.coverPage?.rightSide?.mainTitle || '',
           subtitle: book.coverPage?.rightSide?.subtitle || '',
         },
-        characterPrompt: book.coverPage?.characterPrompt || '',
+        characterPrompt: book.coverPage?.characterPrompt || book.coverPage?.characterPromptMale || book.coverPage?.characterPromptFemale || '',
+        characterPromptMale: book.coverPage?.characterPromptMale || book.coverPage?.characterPrompt || '',
+        characterPromptFemale: book.coverPage?.characterPromptFemale || book.coverPage?.characterPrompt || '',
       },
       dedicationPage: {
         backgroundImage: {
@@ -487,7 +497,9 @@ function Books() {
         },
         title: book.dedicationPage?.title || '',
         secondTitle: book.dedicationPage?.secondTitle || '',
-        characterPrompt: book.dedicationPage?.characterPrompt || '',
+        characterPrompt: book.dedicationPage?.characterPrompt || book.dedicationPage?.characterPromptMale || book.dedicationPage?.characterPromptFemale || '',
+        characterPromptMale: book.dedicationPage?.characterPromptMale || book.dedicationPage?.characterPrompt || '',
+        characterPromptFemale: book.dedicationPage?.characterPromptFemale || book.dedicationPage?.characterPrompt || '',
       },
     });
 
@@ -575,10 +587,28 @@ function Books() {
     });
   };
 
-const handlePagePromptChange = (index, value) => {
+const handlePagePromptChange = (index, gender, value) => {
   setFormState((prev) => {
     const nextPages = [...prev.pages];
-    nextPages[index] = { ...nextPages[index], prompt: value };
+    const current = nextPages[index];
+    if (!current) return prev;
+    const updated = { ...current };
+
+    if (gender === 'male') {
+      updated.promptMale = value;
+    } else if (gender === 'female') {
+      updated.promptFemale = value;
+    } else {
+      updated.prompt = value;
+    }
+
+    const normalizedMale = updated.promptMale?.trim?.();
+    const normalizedFemale = updated.promptFemale?.trim?.();
+    const normalizedFallback = updated.prompt?.trim?.();
+
+    updated.prompt = normalizedFallback || normalizedMale || normalizedFemale || '';
+
+    nextPages[index] = updated;
     return { ...prev, pages: nextPages };
   });
 };
@@ -822,14 +852,30 @@ const handleRemovePageImage = (index) => {
     }));
   };
 
-  const handleCoverPagePromptChange = (value) => {
-    setFormState((prev) => ({
-      ...prev,
-      coverPage: {
-        ...prev.coverPage,
-        characterPrompt: value,
-      },
-    }));
+  const handleCoverPagePromptChange = (field, value) => {
+    setFormState((prev) => {
+      const nextCoverPage = { ...prev.coverPage };
+      if (field === 'male') {
+        nextCoverPage.characterPromptMale = value;
+      } else if (field === 'female') {
+        nextCoverPage.characterPromptFemale = value;
+      } else {
+        nextCoverPage.characterPrompt = value;
+      }
+      const maleTrim = nextCoverPage.characterPromptMale?.trim?.();
+      const femaleTrim = nextCoverPage.characterPromptFemale?.trim?.();
+      const neutralTrim =
+        field === 'neutral'
+          ? value?.trim?.()
+          : nextCoverPage.characterPrompt?.trim?.();
+      nextCoverPage.characterPrompt =
+        neutralTrim || maleTrim || femaleTrim || '';
+
+      return {
+        ...prev,
+        coverPage: nextCoverPage,
+      };
+    });
   };
 
   const handleDedicationFieldChange = (field, value) => {
@@ -842,14 +888,30 @@ const handleRemovePageImage = (index) => {
     }));
   };
 
-  const handleDedicationPromptChange = (value) => {
-    setFormState((prev) => ({
-      ...prev,
-      dedicationPage: {
-        ...prev.dedicationPage,
-        characterPrompt: value,
-      },
-    }));
+  const handleDedicationPromptChange = (field, value) => {
+    setFormState((prev) => {
+      const nextDedication = { ...prev.dedicationPage };
+      if (field === 'male') {
+        nextDedication.characterPromptMale = value;
+      } else if (field === 'female') {
+        nextDedication.characterPromptFemale = value;
+      } else {
+        nextDedication.characterPrompt = value;
+      }
+      const maleTrim = nextDedication.characterPromptMale?.trim?.();
+      const femaleTrim = nextDedication.characterPromptFemale?.trim?.();
+      const neutralTrim =
+        field === 'neutral'
+          ? value?.trim?.()
+          : nextDedication.characterPrompt?.trim?.();
+      nextDedication.characterPrompt =
+        neutralTrim || maleTrim || femaleTrim || '';
+
+      return {
+        ...prev,
+        dedicationPage: nextDedication,
+      };
+    });
   };
 
   const handleDedicationImageChange = (imageType, event) => {
@@ -1051,7 +1113,10 @@ const handleRemovePageImage = (index) => {
 
     const shouldIncludePage = (page) => {
       const hasText = page.text?.trim?.();
-      const hasPrompt = page.prompt?.trim?.();
+      const hasPrompt =
+        page.promptMale?.trim?.() ||
+        page.promptFemale?.trim?.() ||
+        page.prompt?.trim?.();
       const hasBackground = page.file || page.existingImage;
       const hasCoverInputs =
         page.pageType === 'cover' &&
@@ -1093,11 +1158,18 @@ const handleRemovePageImage = (index) => {
             }
           : null;
 
+      const promptMale = page.promptMale?.trim?.() || '';
+      const promptFemale = page.promptFemale?.trim?.() || '';
+      const promptCombined =
+        page.prompt?.trim?.() || promptMale || promptFemale || '';
+
       pagesPayload.push({
         id: page.id,
         order: pagesPayload.length + 1,
         text: page.text,
-        prompt: page.prompt?.trim?.() || '',
+        prompt: promptCombined,
+        promptMale,
+        promptFemale,
         hasNewImage: Boolean(page.file),
         removeImage: Boolean(page.removeImage) && !page.file,
         pageType: page.pageType,
@@ -1164,7 +1236,13 @@ const handleRemovePageImage = (index) => {
       removeBackgroundImage: Boolean(formState.coverPage.backgroundImage.remove) && !formState.coverPage.backgroundImage.file,
       hasNewQrCode: Boolean(formState.coverPage.qrCode.file),
       removeQrCode: Boolean(formState.coverPage.qrCode.remove) && !formState.coverPage.qrCode.file,
-      characterPrompt: formState.coverPage.characterPrompt || '',
+      characterPrompt:
+        formState.coverPage.characterPrompt ||
+        formState.coverPage.characterPromptMale ||
+        formState.coverPage.characterPromptFemale ||
+        '',
+      characterPromptMale: formState.coverPage.characterPromptMale || '',
+      characterPromptFemale: formState.coverPage.characterPromptFemale || '',
     };
     formData.append('coverPage', JSON.stringify(coverPageData));
 
@@ -1181,7 +1259,13 @@ const handleRemovePageImage = (index) => {
       secondTitle: formState.dedicationPage.secondTitle || '',
       hasNewBackgroundImage: Boolean(formState.dedicationPage.backgroundImage.file),
       removeBackgroundImage: Boolean(formState.dedicationPage.backgroundImage.remove) && !formState.dedicationPage.backgroundImage.file,
-      characterPrompt: formState.dedicationPage.characterPrompt || '',
+      characterPrompt:
+        formState.dedicationPage.characterPrompt ||
+        formState.dedicationPage.characterPromptMale ||
+        formState.dedicationPage.characterPromptFemale ||
+        '',
+      characterPromptMale: formState.dedicationPage.characterPromptMale || '',
+      characterPromptFemale: formState.dedicationPage.characterPromptFemale || '',
     };
     formData.append('dedicationPage', JSON.stringify(dedicationPageData));
 
@@ -1675,19 +1759,39 @@ const handleRemovePageImage = (index) => {
                         )}
                       </div>
 
-                      <div className="space-y-2">
-                        <Label htmlFor={`page-prompt-${index}`}>Character prompt</Label>
-                        <Textarea
-                          id={`page-prompt-${index}`}
-                          minRows={2}
-                          placeholder="Describe the character you want to generate for this scene."
-                          value={page.prompt}
-                          onChange={(event) =>
-                            handlePagePromptChange(index, event.target.value)
-                          }
-                        />
+                      <div className="space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor={`page-prompt-male-${index}`}>
+                              Character prompt (male reader)
+                            </Label>
+                            <Textarea
+                              id={`page-prompt-male-${index}`}
+                              minRows={2}
+                              placeholder="Describe the character when the reader is male."
+                              value={page.promptMale}
+                              onChange={(event) =>
+                                handlePagePromptChange(index, 'male', event.target.value)
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`page-prompt-female-${index}`}>
+                              Character prompt (female reader)
+                            </Label>
+                            <Textarea
+                              id={`page-prompt-female-${index}`}
+                              minRows={2}
+                              placeholder="Describe the character when the reader is female."
+                              value={page.promptFemale}
+                              onChange={(event) =>
+                                handlePagePromptChange(index, 'female', event.target.value)
+                              }
+                            />
+                          </div>
+                        </div>
                         <p className="text-xs text-foreground/50">
-                          Saved for future character image generation.
+                          Prompts feed future character generation; leave a field empty to reuse the other prompt.
                         </p>
                       </div>
                     </div>
@@ -1756,17 +1860,40 @@ const handleRemovePageImage = (index) => {
                         )}
                       </div>
 
-                      <div className="space-y-2 rounded-lg border border-border/60 bg-card p-4">
-                        <Label htmlFor="coverPageCharacterPrompt">Character prompt</Label>
-                        <Textarea
-                          id="coverPageCharacterPrompt"
-                          minRows={3}
-                          placeholder="Describe the cover character you want to generate."
-                          value={formState.coverPage.characterPrompt}
-                          onChange={(event) => handleCoverPagePromptChange(event.target.value)}
-                        />
+                      <div className="space-y-3 rounded-lg border border-border/60 bg-card p-4">
+                        <Label>Cover character prompts</Label>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="coverPageCharacterPromptMale">
+                              Male reader
+                            </Label>
+                            <Textarea
+                              id="coverPageCharacterPromptMale"
+                              minRows={3}
+                              placeholder="Describe the cover character when the reader is male."
+                              value={formState.coverPage.characterPromptMale}
+                              onChange={(event) =>
+                                handleCoverPagePromptChange('male', event.target.value)
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="coverPageCharacterPromptFemale">
+                              Female reader
+                            </Label>
+                            <Textarea
+                              id="coverPageCharacterPromptFemale"
+                              minRows={3}
+                              placeholder="Describe the cover character when the reader is female."
+                              value={formState.coverPage.characterPromptFemale}
+                              onChange={(event) =>
+                                handleCoverPagePromptChange('female', event.target.value)
+                              }
+                            />
+                          </div>
+                        </div>
                         <p className="text-xs text-foreground/50">
-                          This prompt guides automatic cover character generation. Use {'{name}'} to personalise.
+                          Leave a field empty to reuse the other prompt. Prompts guide automatic cover character generation and support {'{name}'} placeholders.
                         </p>
                       </div>
 
@@ -1939,16 +2066,36 @@ const handleRemovePageImage = (index) => {
                         )}
                       </div>
 
-                      <div className="space-y-2">
-                        <h3 className="font-semibold text-foreground">Character prompt</h3>
-                        <Textarea
-                          minRows={3}
-                          placeholder="Describe the child portrait or dedication illustration."
-                          value={formState.dedicationPage.characterPrompt}
-                          onChange={(event) => handleDedicationPromptChange(event.target.value)}
-                        />
+                      <div className="space-y-3">
+                        <h3 className="font-semibold text-foreground">Character prompts</h3>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="dedicationPromptMale">Male reader</Label>
+                            <Textarea
+                              id="dedicationPromptMale"
+                              minRows={3}
+                              placeholder="Describe the dedication illustration for a male reader."
+                              value={formState.dedicationPage.characterPromptMale}
+                              onChange={(event) =>
+                                handleDedicationPromptChange('male', event.target.value)
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="dedicationPromptFemale">Female reader</Label>
+                            <Textarea
+                              id="dedicationPromptFemale"
+                              minRows={3}
+                              placeholder="Describe the dedication illustration for a female reader."
+                              value={formState.dedicationPage.characterPromptFemale}
+                              onChange={(event) =>
+                                handleDedicationPromptChange('female', event.target.value)
+                              }
+                            />
+                          </div>
+                        </div>
                         <p className="text-xs text-muted-foreground">
-                          Used when generating dedication artwork. Include {'{name}'} to personalise if needed.
+                          Prompts guide dedication artwork generation. Leave one blank to reuse the other; {'{name}'} personalises content.
                         </p>
                       </div>
 

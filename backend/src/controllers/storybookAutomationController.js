@@ -10,7 +10,7 @@ const isValidObjectId = (value) => {
 exports.startAutomation = async (req, res) => {
   try {
     const { id: bookId } = req.params;
-    const { trainingId, userId, readerId, readerName, title } = req.body;
+    const { trainingId, userId, readerId, readerName, readerGender, title } = req.body;
 
     if (!isValidObjectId(bookId)) {
       return res.status(400).json({
@@ -50,6 +50,7 @@ exports.startAutomation = async (req, res) => {
       userId,
       readerId: resolvedReaderId,
       readerName,
+      readerGender,
       title,
     });
 

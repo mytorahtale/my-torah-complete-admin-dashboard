@@ -29,6 +29,10 @@ const TEXT_BG_VERTICAL_PADDING = 40;
 const HEBREW_BASE_FONT_SIZE = 16;
 const HEBREW_WAVE_AMPLITUDE = 8;
 const HEBREW_LINE_SPACING = HEBREW_BASE_FONT_SIZE * 1.4;
+const STORYBOOK_PDF_PREFETCH_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.STORYBOOK_PDF_PREFETCH_CONCURRENCY || 5)
+);
 
 const HTTP_AGENT = new https.Agent({
   keepAlive: true,
@@ -612,6 +616,101 @@ const createBlurredBackground = async (
   }
 };
 
+const mapWithConcurrency = async (items, limit, mapper) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+
+  const results = new Array(items.length);
+  let currentIndex = 0;
+  let error = null;
+
+  const worker = async () => {
+    while (true) {
+      if (error) {
+        return;
+      }
+
+      const nextIndex = currentIndex;
+      currentIndex += 1;
+      if (nextIndex >= items.length) {
+        return;
+      }
+
+      try {
+        results[nextIndex] = await mapper(items[nextIndex], nextIndex);
+      } catch (err) {
+        error = err;
+        return;
+      }
+    }
+  };
+
+  const workerCount = Math.min(Math.max(1, limit || 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (error) {
+    throw error;
+  }
+
+  return results;
+};
+
+const prepareStoryPageAssets = async ({ page, index }) => {
+  const pageData = page || {};
+  const result = {
+    index,
+    backgroundBuffer: null,
+    backgroundError: null,
+    character: null,
+  };
+
+  try {
+    result.backgroundBuffer = await getImageBuffer(pageData.background);
+  } catch (error) {
+    result.backgroundError = error;
+  }
+
+  if (pageData.character) {
+    const characterResult = {
+      buffer: null,
+      source: 'none',
+      attemptedRemoval: false,
+      removalError: null,
+    };
+
+    try {
+      if (pageData.character.backgroundRemoved) {
+        characterResult.buffer = await getImageBuffer(pageData.character);
+        characterResult.source = characterResult.buffer ? 'stored-removed' : 'none';
+      } else {
+        characterResult.attemptedRemoval = true;
+        try {
+          const removedBuffer = await removeBackground(pageData.character);
+          if (removedBuffer && removedBuffer.length) {
+            characterResult.buffer = removedBuffer;
+            characterResult.source = 'removed';
+          }
+        } catch (error) {
+          characterResult.removalError = error;
+        }
+
+        if (!characterResult.buffer || !characterResult.buffer.length) {
+          const fallbackBuffer = await getImageBuffer(pageData.character);
+          characterResult.buffer = fallbackBuffer;
+          characterResult.source = fallbackBuffer ? 'original' : 'none';
+        }
+      }
+    } catch (error) {
+      characterResult.removalError = characterResult.removalError || error;
+    }
+
+    result.character = characterResult;
+  }
+
+  return result;
+};
+
 const wrapText = (text, maxWidth, fontSize) => {
   if (!text) return [];
 
@@ -664,6 +763,35 @@ async function generateStorybookPdf({ title, pages }) {
   const customHebrewFont = await tryEmbedCustomFont(pdfDoc, hebrewFontPath);
   if (customHebrewFont) {
     hebrewFont = customHebrewFont;
+  }
+
+  let prefetchedStoryAssets = new Map();
+  const storyPagesForPrefetch = pages
+    .map((page, index) => ({ page, index }))
+    .filter(({ page }) => {
+      const pageType = (page && page.pageType) || 'story';
+      return pageType === 'story';
+    });
+
+  if (storyPagesForPrefetch.length) {
+    try {
+      const prefetchedResults = await mapWithConcurrency(
+        storyPagesForPrefetch,
+        STORYBOOK_PDF_PREFETCH_CONCURRENCY,
+        (entry) => prepareStoryPageAssets(entry)
+      );
+      prefetchedStoryAssets = new Map(
+        prefetchedResults
+          .filter((value) => Boolean(value && typeof value.index === 'number'))
+          .map((value) => [value.index, value])
+      );
+    } catch (error) {
+      console.warn(
+        '[pdf] prefetching story page assets failed, continuing sequential processing:',
+        error.message
+      );
+      prefetchedStoryAssets = new Map();
+    }
   }
 
   const renderedPageBuffers = [];
@@ -869,7 +997,19 @@ async function generateStorybookPdf({ title, pages }) {
       throw new Error(`Failed to render dedication page: ${errorMessage}`);
     }
 
-    const backgroundBuffer = await getImageBuffer(pageData.background);
+    const prefetchedAssets = prefetchedStoryAssets.get(index) || null;
+
+    let backgroundBuffer =
+      (prefetchedAssets && prefetchedAssets.backgroundBuffer) || null;
+    if (prefetchedAssets?.backgroundError) {
+      console.warn(
+        `[pdf] Failed to prefetch background for page ${index + 1}:`,
+        prefetchedAssets.backgroundError.message
+      );
+    }
+    if (!backgroundBuffer) {
+      backgroundBuffer = await getImageBuffer(pageData.background);
+    }
     let hasBackground = false;
     if (backgroundBuffer) {
       console.log(
@@ -900,33 +1040,85 @@ async function generateStorybookPdf({ title, pages }) {
     }
 
     if (pageData.character) {
-      let characterBuffer = null;
-      if (pageData.character.backgroundRemoved) {
-        characterBuffer = await getImageBuffer(pageData.character);
-        console.log(
-          `[pdf] using stored background-removed buffer for page ${index + 1}:`,
-          characterBuffer ? characterBuffer.length : null
+      const prefetchedCharacter = prefetchedAssets?.character || null;
+      let characterBuffer = (prefetchedCharacter && prefetchedCharacter.buffer) || null;
+      let characterSource = (prefetchedCharacter && prefetchedCharacter.source) || 'none';
+
+      if (prefetchedCharacter?.removalError) {
+        console.warn(
+          `[pdf] background removal failed for page ${index + 1}:`,
+          prefetchedCharacter.removalError.message
         );
-      } else {
-        try {
-          characterBuffer = await removeBackground(pageData.character);
+      }
+
+      if (characterBuffer && characterBuffer.length) {
+        if (characterSource === 'stored-removed') {
+          console.log(
+            `[pdf] using stored background-removed buffer for page ${index + 1}:`,
+            characterBuffer.length
+          );
+        } else if (characterSource === 'removed') {
           console.log(
             `[pdf] removeBackground result for page ${index + 1}:`,
-            characterBuffer ? characterBuffer.length : null
+            characterBuffer.length
           );
-        } catch (error) {
-          console.warn(
-            `[pdf] background removal failed for page ${index + 1}:`,
-            error.message
-          );
-        }
-
-        if (!characterBuffer || !characterBuffer.length) {
-          characterBuffer = await getImageBuffer(pageData.character);
+        } else if (characterSource === 'original') {
           console.log(
             `[pdf] using original character buffer for page ${index + 1}:`,
-            characterBuffer ? characterBuffer.length : null
+            characterBuffer.length
           );
+        }
+      }
+
+      if (!characterBuffer || !characterBuffer.length) {
+        if (pageData.character.backgroundRemoved) {
+          characterBuffer = await getImageBuffer(pageData.character);
+          characterSource = characterBuffer ? 'stored-removed' : 'none';
+          if (characterBuffer && characterBuffer.length) {
+            console.log(
+              `[pdf] using stored background-removed buffer for page ${index + 1}:`,
+              characterBuffer.length
+            );
+          }
+        } else if (!prefetchedCharacter || !prefetchedCharacter.attemptedRemoval) {
+          try {
+            const removedBuffer = await removeBackground(pageData.character);
+            if (removedBuffer && removedBuffer.length) {
+              characterBuffer = removedBuffer;
+              characterSource = 'removed';
+              console.log(
+                `[pdf] removeBackground result for page ${index + 1}:`,
+                characterBuffer.length
+              );
+            }
+          } catch (error) {
+            console.warn(
+              `[pdf] background removal failed for page ${index + 1}:`,
+              error.message
+            );
+          }
+
+          if (!characterBuffer || !characterBuffer.length) {
+            const fallbackBuffer = await getImageBuffer(pageData.character);
+            if (fallbackBuffer && fallbackBuffer.length) {
+              characterBuffer = fallbackBuffer;
+              characterSource = 'original';
+              console.log(
+                `[pdf] using original character buffer for page ${index + 1}:`,
+                characterBuffer.length
+              );
+            }
+          }
+        } else if (!characterBuffer || !characterBuffer.length) {
+          const fallbackBuffer = await getImageBuffer(pageData.character);
+          if (fallbackBuffer && fallbackBuffer.length) {
+            characterBuffer = fallbackBuffer;
+            characterSource = 'original';
+            console.log(
+              `[pdf] using original character buffer for page ${index + 1}:`,
+              characterBuffer.length
+            );
+          }
         }
       }
 

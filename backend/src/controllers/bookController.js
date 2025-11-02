@@ -47,6 +47,57 @@ const normalizeBoolean = (value) =>
 const normalizeString = (value) =>
   typeof value === 'string' ? value.trim() : '';
 
+const normalizeGenderValue = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const extractPromptFields = (payload = {}) => {
+  const promptMale =
+    normalizeString(payload.promptMale) || normalizeString(payload.characterPromptMale);
+  const promptFemale =
+    normalizeString(payload.promptFemale) || normalizeString(payload.characterPromptFemale);
+  const prompt =
+    normalizeString(payload.prompt) ||
+    normalizeString(payload.characterPrompt) ||
+    promptMale ||
+    promptFemale;
+
+  return {
+    prompt,
+    promptMale,
+    promptFemale,
+  };
+};
+
+const resolvePromptByGender = (source = {}, gender = '') => {
+  const normalizedGender = normalizeGenderValue(gender);
+  const promptMale =
+    normalizeString(source.promptMale) || normalizeString(source.characterPromptMale);
+  const promptFemale =
+    normalizeString(source.promptFemale) || normalizeString(source.characterPromptFemale);
+  const promptNeutral =
+    normalizeString(source.prompt) || normalizeString(source.characterPrompt);
+
+  if (normalizedGender === 'male' && promptMale) {
+    return promptMale;
+  }
+  if (normalizedGender === 'female' && promptFemale) {
+    return promptFemale;
+  }
+
+  if (promptNeutral) {
+    return promptNeutral;
+  }
+
+  if (normalizedGender === 'male' && promptFemale) {
+    return promptFemale;
+  }
+  if (normalizedGender === 'female' && promptMale) {
+    return promptMale;
+  }
+
+  return promptNeutral || '';
+};
+
 const getGenderPronouns = (gender) => {
   if (!gender) return { subject: '', possessive: '', object: '' };
   const lowerGender = gender.toLowerCase();
@@ -351,15 +402,17 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
           coverPageClone.characterImage
         );
         coverPageClone.characterImageOriginal = await attachFreshSignedUrl(
-          coverPageClone.characterImageOriginal
-        );
-        coverPageClone.qrCode = await attachFreshSignedUrl(coverPageClone.qrCode);
-        coverPageClone.characterPrompt = safeText(coverPageClone.characterPrompt);
-        coverPageClone.leftSide = {
-          title: safeText(coverPageClone.leftSide?.title),
-          content: safeText(coverPageClone.leftSide?.content),
-          bottomText: safeText(coverPageClone.leftSide?.bottomText),
-        };
+        coverPageClone.characterImageOriginal
+      );
+      coverPageClone.qrCode = await attachFreshSignedUrl(coverPageClone.qrCode);
+      coverPageClone.characterPrompt = safeText(coverPageClone.characterPrompt);
+      coverPageClone.characterPromptMale = safeText(coverPageClone.characterPromptMale);
+      coverPageClone.characterPromptFemale = safeText(coverPageClone.characterPromptFemale);
+      coverPageClone.leftSide = {
+        title: safeText(coverPageClone.leftSide?.title),
+        content: safeText(coverPageClone.leftSide?.content),
+        bottomText: safeText(coverPageClone.leftSide?.bottomText),
+      };
         coverPageClone.rightSide = {
           mainTitle: safeText(coverPageClone.rightSide?.mainTitle),
           subtitle: safeText(coverPageClone.rightSide?.subtitle),
@@ -378,12 +431,14 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
           dedicationClone.generatedImage
         );
         dedicationClone.generatedImageOriginal = await attachFreshSignedUrl(
-          dedicationClone.generatedImageOriginal
-        );
-        dedicationClone.title = safeText(dedicationClone.title);
-        dedicationClone.secondTitle = safeText(dedicationClone.secondTitle);
-        dedicationClone.characterPrompt = safeText(dedicationClone.characterPrompt);
-        resolvedDedicationPage = dedicationClone;
+        dedicationClone.generatedImageOriginal
+      );
+      dedicationClone.title = safeText(dedicationClone.title);
+      dedicationClone.secondTitle = safeText(dedicationClone.secondTitle);
+      dedicationClone.characterPrompt = safeText(dedicationClone.characterPrompt);
+      dedicationClone.characterPromptMale = safeText(dedicationClone.characterPromptMale);
+      dedicationClone.characterPromptFemale = safeText(dedicationClone.characterPromptFemale);
+      resolvedDedicationPage = dedicationClone;
       }
 
       const resolvedRenderedImage = await attachFreshSignedUrl(clonedPage.renderedImage);
@@ -417,6 +472,8 @@ const hydrateBookDocument = async (book) => {
     );
     coverPageClone.qrCode = await attachFreshSignedUrl(coverPageClone.qrCode);
     coverPageClone.characterPrompt = safeText(coverPageClone.characterPrompt);
+    coverPageClone.characterPromptMale = safeText(coverPageClone.characterPromptMale);
+    coverPageClone.characterPromptFemale = safeText(coverPageClone.characterPromptFemale);
     coverPageClone.leftSide = {
       title: safeText(coverPageClone.leftSide?.title),
       content: safeText(coverPageClone.leftSide?.content),
@@ -440,6 +497,8 @@ const hydrateBookDocument = async (book) => {
     dedicationClone.title = safeText(dedicationClone.title);
     dedicationClone.secondTitle = safeText(dedicationClone.secondTitle);
     dedicationClone.characterPrompt = safeText(dedicationClone.characterPrompt);
+    dedicationClone.characterPromptMale = safeText(dedicationClone.characterPromptMale);
+    dedicationClone.characterPromptFemale = safeText(dedicationClone.characterPromptFemale);
     clonedBook.dedicationPage = dedicationClone;
   }
 
@@ -464,6 +523,9 @@ const hydrateBookDocument = async (book) => {
         ...clonedPage,
         pageType: clonedPage.pageType || 'story',
         cover,
+        characterPrompt: safeText(clonedPage.characterPrompt),
+        characterPromptMale: safeText(clonedPage.characterPromptMale),
+        characterPromptFemale: safeText(clonedPage.characterPromptFemale),
         backgroundImage: await attachFreshSignedUrl(clonedPage.backgroundImage),
         characterImage: await attachFreshSignedUrl(clonedPage.characterImage),
         characterImageOriginal: await attachFreshSignedUrl(clonedPage.characterImageOriginal),
@@ -878,13 +940,14 @@ exports.createBook = async (req, res) => {
     }
 
     const pagesPayload = pagesRaw.map((page, index) => {
-      const promptValue =
-        normalizeString(page?.prompt) || normalizeString(page?.characterPrompt);
+      const promptFields = extractPromptFields(page || {});
       const pageType = page?.pageType === 'cover' ? 'cover' : 'story';
       const base = {
         order: Number(page.order) || index + 1,
         text: typeof page.text === 'string' ? page.text : '',
-        characterPrompt: promptValue,
+        characterPrompt: promptFields.prompt,
+        characterPromptMale: promptFields.promptMale,
+        characterPromptFemale: promptFields.promptFemale,
         hasNewImage: normalizeBoolean(page.hasNewImage),
         removeImage: normalizeBoolean(page.removeImage),
         pageType,
@@ -927,10 +990,13 @@ exports.createBook = async (req, res) => {
 
     for (let index = 0; index < pagesPayload.length; index += 1) {
       const pageDefinition = pagesPayload[index];
+      const promptFields = extractPromptFields(pageDefinition || {});
       const pageData = {
         order: pageDefinition.order,
         text: pageDefinition.text,
-        characterPrompt: normalizeString(pageDefinition.characterPrompt),
+        characterPrompt: promptFields.prompt,
+        characterPromptMale: promptFields.promptMale,
+        characterPromptFemale: promptFields.promptFemale,
         pageType: pageDefinition.pageType || 'story',
       };
       let coverConfig = null;
@@ -1031,6 +1097,7 @@ exports.createBook = async (req, res) => {
         qrCode = buildImageResponse(coverPageQrFile, qrKey, url);
       }
 
+      const coverPromptFields = extractPromptFields(coverPagePayload || {});
       coverPageData = {
         backgroundImage,
         characterImage: null,
@@ -1045,7 +1112,9 @@ exports.createBook = async (req, res) => {
           mainTitle: normalizeString(coverPagePayload.rightSide?.mainTitle),
           subtitle: normalizeString(coverPagePayload.rightSide?.subtitle),
         },
-        characterPrompt: normalizeString(coverPagePayload.characterPrompt),
+        characterPrompt: coverPromptFields.prompt,
+        characterPromptMale: coverPromptFields.promptMale,
+        characterPromptFemale: coverPromptFields.promptFemale,
       };
     }
 
@@ -1067,6 +1136,7 @@ exports.createBook = async (req, res) => {
         dedicationBackgroundImage = buildImageResponse(dedicationBgFile, bgKey, url);
       }
 
+      const dedicationPromptFields = extractPromptFields(dedicationPagePayload || {});
       dedicationPageData = {
         backgroundImage: dedicationBackgroundImage,
         kidImage: null,
@@ -1074,7 +1144,9 @@ exports.createBook = async (req, res) => {
         generatedImageOriginal: null,
         title: normalizeString(dedicationPagePayload.title),
         secondTitle: normalizeString(dedicationPagePayload.secondTitle),
-        characterPrompt: normalizeString(dedicationPagePayload.characterPrompt),
+        characterPrompt: dedicationPromptFields.prompt,
+        characterPromptMale: dedicationPromptFields.promptMale,
+        characterPromptFemale: dedicationPromptFields.promptFemale,
       };
     }
 
@@ -1189,10 +1261,14 @@ exports.updateBook = async (req, res) => {
       const order = Number(incoming.order) || index + 1;
       const text = typeof incoming.text === 'string' ? incoming.text : '';
       const existing = pageId ? existingPagesMap.get(pageId) : null;
-      const incomingPrompt =
-        normalizeString(incoming.prompt) ||
-        normalizeString(incoming.characterPrompt) ||
-        normalizeString(existing?.characterPrompt);
+      const existingPromptFields = extractPromptFields(existing || {});
+      const incomingPromptFields = extractPromptFields(incoming || {});
+      const resolvedPromptFields = {
+        prompt: incomingPromptFields.prompt || existingPromptFields.prompt,
+        promptMale: incomingPromptFields.promptMale || existingPromptFields.promptMale,
+        promptFemale:
+          incomingPromptFields.promptFemale || existingPromptFields.promptFemale,
+      };
 
       if (pageId) {
         providedPageIds.add(pageId);
@@ -1203,7 +1279,12 @@ exports.updateBook = async (req, res) => {
       const pageData = {
         order,
         text,
-        characterPrompt: incomingPrompt,
+        characterPrompt:
+          resolvedPromptFields.prompt ||
+          resolvedPromptFields.promptMale ||
+          resolvedPromptFields.promptFemale,
+        characterPromptMale: resolvedPromptFields.promptMale,
+        characterPromptFemale: resolvedPromptFields.promptFemale,
         pageType,
       };
 
@@ -1387,6 +1468,7 @@ exports.updateBook = async (req, res) => {
         qrCode = null;
       }
 
+      const coverPromptFields = extractPromptFields(coverPagePayload || {});
       book.coverPage = {
         backgroundImage,
         characterImage,
@@ -1401,7 +1483,9 @@ exports.updateBook = async (req, res) => {
           mainTitle: normalizeString(coverPagePayload.rightSide?.mainTitle),
           subtitle: normalizeString(coverPagePayload.rightSide?.subtitle),
         },
-        characterPrompt: normalizeString(coverPagePayload.characterPrompt),
+        characterPrompt: coverPromptFields.prompt,
+        characterPromptMale: coverPromptFields.promptMale,
+        characterPromptFemale: coverPromptFields.promptFemale,
       };
     }
 
@@ -1449,6 +1533,7 @@ exports.updateBook = async (req, res) => {
         generatedImageOriginal = null;
       }
 
+      const dedicationPromptFields = extractPromptFields(dedicationPagePayload || {});
       book.dedicationPage = {
         backgroundImage: dedicationBackgroundImage,
         kidImage,
@@ -1456,7 +1541,9 @@ exports.updateBook = async (req, res) => {
         generatedImageOriginal,
         title: normalizeString(dedicationPagePayload.title),
         secondTitle: normalizeString(dedicationPagePayload.secondTitle),
-        characterPrompt: normalizeString(dedicationPagePayload.characterPrompt),
+        characterPrompt: dedicationPromptFields.prompt,
+        characterPromptMale: dedicationPromptFields.promptMale,
+        characterPromptFemale: dedicationPromptFields.promptFemale,
       };
     }
 
@@ -1631,6 +1718,7 @@ exports.generateStorybook = async (req, res) => {
     const pagesPayload = parsePagesPayload(req.body.pages);
     const readerId = normalizeString(req.body.readerId);
     let readerName = normalizeString(req.body.readerName);
+    let readerGender = normalizeString(req.body.readerGender);
 
     const book = await Book.findById(id);
     if (!book) {
@@ -1654,16 +1742,15 @@ exports.generateStorybook = async (req, res) => {
       });
     }
 
-    let readerGender = '';
-    if (!readerName && readerId) {
+    if ((!readerName || !readerGender) && readerId) {
       const reader = await User.findById(readerId).select('name gender').lean();
       if (reader?.name) {
         readerName = normalizeString(reader.name);
       }
-      if (reader?.gender) {
+      if (!readerGender && reader?.gender) {
         readerGender = normalizeString(reader.gender);
       }
-    } else if (readerId) {
+    } else if (!readerGender && readerId) {
       const reader = await User.findById(readerId).select('gender').lean();
       if (reader?.gender) {
         readerGender = normalizeString(reader.gender);
@@ -1787,11 +1874,21 @@ exports.generateStorybook = async (req, res) => {
     }
 
     const frontMatterPages = [];
-    const coverFrontMatter = buildCoverPageContent({ book, readerName, storyPages });
+    const coverFrontMatter = buildCoverPageContent({
+      book,
+      readerName,
+      readerGender,
+      storyPages,
+    });
     if (coverFrontMatter) {
       frontMatterPages.push(coverFrontMatter);
     }
-    const dedicationFrontMatter = buildDedicationPageContent({ book, readerName, storyPages });
+    const dedicationFrontMatter = buildDedicationPageContent({
+      book,
+      readerName,
+      readerGender,
+      storyPages,
+    });
     if (dedicationFrontMatter) {
       frontMatterPages.push(dedicationFrontMatter);
     }
@@ -1877,6 +1974,16 @@ exports.generateStorybook = async (req, res) => {
           normalizeString(coverFrontMatter.coverPage.characterPrompt) ||
           book.coverPage.characterPrompt;
       }
+      if (typeof coverFrontMatter.coverPage.characterPromptMale === 'string') {
+        book.coverPage.characterPromptMale =
+          normalizeString(coverFrontMatter.coverPage.characterPromptMale) ||
+          book.coverPage.characterPromptMale;
+      }
+      if (typeof coverFrontMatter.coverPage.characterPromptFemale === 'string') {
+        book.coverPage.characterPromptFemale =
+          normalizeString(coverFrontMatter.coverPage.characterPromptFemale) ||
+          book.coverPage.characterPromptFemale;
+      }
       if (!book.coverPage.backgroundImage && coverFrontMatter.coverPage.backgroundImage) {
         book.coverPage.backgroundImage = coverFrontMatter.coverPage.backgroundImage;
       }
@@ -1903,6 +2010,18 @@ exports.generateStorybook = async (req, res) => {
           normalizeString(dedicationFrontMatter.dedicationPage.characterPrompt) ||
           book.dedicationPage.characterPrompt;
       }
+      if (typeof dedicationFrontMatter.dedicationPage.characterPromptMale === 'string') {
+        book.dedicationPage.characterPromptMale =
+          normalizeString(dedicationFrontMatter.dedicationPage.characterPromptMale) ||
+          book.dedicationPage.characterPromptMale;
+      }
+      if (
+        typeof dedicationFrontMatter.dedicationPage.characterPromptFemale === 'string'
+      ) {
+        book.dedicationPage.characterPromptFemale =
+          normalizeString(dedicationFrontMatter.dedicationPage.characterPromptFemale) ||
+          book.dedicationPage.characterPromptFemale;
+      }
       if (
         !book.dedicationPage.backgroundImage &&
         dedicationFrontMatter.dedicationPage.backgroundImage
@@ -1925,6 +2044,7 @@ exports.generateStorybook = async (req, res) => {
       storybookJobId: null,
       readerId: readerId || null,
       readerName: readerName || '',
+      readerGender: readerGender || '',
       userId: readerId || null,
       variant: 'standard',
       derivedFromAssetId: null,
@@ -1983,6 +2103,7 @@ exports.regenerateStorybookPage = async (req, res) => {
       userId: userIdOverride,
       readerId: readerIdOverride,
       readerName: readerNameOverride,
+      readerGender: readerGenderOverride,
     } = req.body || {};
 
     const book = await Book.findById(bookId);
@@ -2023,11 +2144,14 @@ exports.regenerateStorybookPage = async (req, res) => {
     const readerId = readerIdOverride || pdfAsset.readerId || userId;
     const readerName = readerNameOverride || pdfAsset.readerName || '';
 
-    let readerGender = '';
-    if (readerId) {
+    let readerGender =
+      normalizeString(req.body.readerGender) ||
+      normalizeString(readerGenderOverride) ||
+      '';
+    if (!readerGender && readerId) {
       const reader = await User.findById(readerId).select('gender').lean();
       if (reader?.gender) {
-        readerGender = reader.gender;
+        readerGender = normalizeString(reader.gender);
       }
     }
 
@@ -2091,7 +2215,12 @@ exports.regenerateStorybookPage = async (req, res) => {
 exports.regenerateStorybookPdf = async (req, res) => {
   try {
     const { id: bookId, assetId } = req.params;
-    const { title: overrideTitle } = req.body || {};
+    const {
+      title: overrideTitle,
+      readerId: readerIdOverride,
+      readerName: readerNameOverride,
+      readerGender: readerGenderOverride,
+    } = req.body || {};
 
     const book = await Book.findById(bookId);
     if (!book) {
@@ -2185,7 +2314,33 @@ exports.regenerateStorybookPdf = async (req, res) => {
       });
     }
 
-    const readerName = pdfAssetDoc.readerName || '';
+    const normalizedReaderIdString = normalizeString(readerIdOverride);
+    const hasOverrideReaderId = normalizedReaderIdString && mongoose.Types.ObjectId.isValid(normalizedReaderIdString);
+    const resolvedReaderId =
+      hasOverrideReaderId
+        ? new mongoose.Types.ObjectId(normalizedReaderIdString)
+        : pdfAssetDoc.readerId;
+
+    let readerName =
+      normalizeString(readerNameOverride) ||
+      pdfAssetDoc.readerName ||
+      '';
+    let readerGender =
+      normalizeString(readerGenderOverride) ||
+      normalizeString(pdfAssetDoc.readerGender) ||
+      '';
+
+    if ((!readerName || !readerGender) && resolvedReaderId) {
+      const readerDoc = await User.findById(resolvedReaderId).select('name gender').lean();
+      if (readerDoc) {
+        if (!readerName && readerDoc.name) {
+          readerName = normalizeString(readerDoc.name);
+        }
+        if (!readerGender && readerDoc.gender) {
+          readerGender = normalizeString(readerDoc.gender);
+        }
+      }
+    }
 
     const frontMatterPages = [];
 
@@ -2199,7 +2354,13 @@ exports.regenerateStorybookPdf = async (req, res) => {
       rankingNotes: coverPdfPage.rankingNotes || [],
     } : null;
 
-    const coverFrontMatter = buildCoverPageContent({ book, readerName, storyPages, jobPage: coverJobPage });
+    const coverFrontMatter = buildCoverPageContent({
+      book,
+      readerName,
+      readerGender,
+      storyPages,
+      jobPage: coverJobPage,
+    });
     if (coverFrontMatter) {
       frontMatterPages.push(coverFrontMatter);
     }
@@ -2213,7 +2374,13 @@ exports.regenerateStorybookPdf = async (req, res) => {
       rankingNotes: dedicationPdfPage.rankingNotes || [],
     } : null;
 
-    const dedicationFrontMatter = buildDedicationPageContent({ book, readerName, storyPages, jobPage: dedicationJobPage });
+    const dedicationFrontMatter = buildDedicationPageContent({
+      book,
+      readerName,
+      readerGender,
+      storyPages,
+      jobPage: dedicationJobPage,
+    });
     if (dedicationFrontMatter) {
       frontMatterPages.push(dedicationFrontMatter);
     }
@@ -2319,6 +2486,9 @@ exports.regenerateStorybookPdf = async (req, res) => {
     pdfAssetDoc.pageCount = pageCount;
     pdfAssetDoc.updatedAt = now;
     pdfAssetDoc.pages = pagesSnapshot;
+    pdfAssetDoc.readerId = resolvedReaderId || null;
+    pdfAssetDoc.readerName = readerName;
+    pdfAssetDoc.readerGender = readerGender;
 
     if (backgroundRemovalApplied) {
       book.markModified('pages');

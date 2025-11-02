@@ -1724,6 +1724,14 @@ const cloneCoverPageConfig = (coverPage) => {
     qrCode: coverPage.qrCode ? { ...coverPage.qrCode } : null,
     characterPrompt:
       typeof coverPage.characterPrompt === 'string' ? coverPage.characterPrompt : '',
+    characterPromptMale:
+      typeof coverPage.characterPromptMale === 'string'
+        ? coverPage.characterPromptMale
+        : '',
+    characterPromptFemale:
+      typeof coverPage.characterPromptFemale === 'string'
+        ? coverPage.characterPromptFemale
+        : '',
     leftSide: {
       title: typeof coverPage.leftSide?.title === 'string' ? coverPage.leftSide.title : '',
       content: typeof coverPage.leftSide?.content === 'string' ? coverPage.leftSide.content : '',
@@ -1747,10 +1755,42 @@ const cloneDedicationPageConfig = (dedicationPage) => {
     generatedImage: dedicationPage.generatedImage ? { ...dedicationPage.generatedImage } : null,
     characterPrompt:
       typeof dedicationPage.characterPrompt === 'string' ? dedicationPage.characterPrompt : '',
+    characterPromptMale:
+      typeof dedicationPage.characterPromptMale === 'string'
+        ? dedicationPage.characterPromptMale
+        : '',
+    characterPromptFemale:
+      typeof dedicationPage.characterPromptFemale === 'string'
+        ? dedicationPage.characterPromptFemale
+        : '',
     title: typeof dedicationPage.title === 'string' ? dedicationPage.title : '',
     secondTitle:
       typeof dedicationPage.secondTitle === 'string' ? dedicationPage.secondTitle : '',
   };
+};
+
+const normalisePromptText = (value) => (typeof value === 'string' ? value.trim() : '');
+const normaliseGenderValue = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const resolvePromptForGender = (source = {}, gender = '') => {
+  const male = normalisePromptText(
+    source.characterPromptMale || source.promptMale || source.malePrompt
+  );
+  const female = normalisePromptText(
+    source.characterPromptFemale || source.promptFemale || source.femalePrompt
+  );
+  const neutral = normalisePromptText(
+    source.characterPrompt || source.prompt || source.neutralPrompt
+  );
+  const normalizedGender = normaliseGenderValue(gender);
+
+  if (normalizedGender === 'male' && male) return male;
+  if (normalizedGender === 'female' && female) return female;
+  if (neutral) return neutral;
+  if (normalizedGender === 'male' && female) return female;
+  if (normalizedGender === 'female' && male) return male;
+  return neutral || male || female || '';
 };
 
 const normaliseAssetPages = (pages) => {
@@ -1952,6 +1992,30 @@ function Storybooks() {
   );
 
   useEffect(() => {
+    const readerGender = selectedReader?.gender || '';
+    setPages((prev) =>
+      prev.map((page) => {
+        const nextPrompt = resolvePromptForGender(
+          {
+            characterPromptMale: page.promptMale,
+            characterPromptFemale: page.promptFemale,
+            characterPrompt: page.promptNeutral || page.prompt,
+          },
+          readerGender
+        );
+        if (nextPrompt === (page.prompt || '')) {
+          return page;
+        }
+        return {
+          ...page,
+          prompt:
+            nextPrompt || page.promptNeutral || page.promptMale || page.promptFemale || '',
+        };
+      })
+    );
+  }, [selectedReader?.gender]);
+
+  useEffect(() => {
     setLibrarySearchTerm('');
     setLibraryStatusFilter('all');
     setLibraryPageSize(DEFAULT_LIBRARY_PAGE_SIZE);
@@ -2015,22 +2079,30 @@ function Storybooks() {
           return `${book.name} Storybook`;
         });
         setPages(
-          (book.pages || []).map((page) => ({
-            id: page._id,
-            order: page.order,
-            pageType: page.pageType === 'cover' ? 'cover' : 'story',
-            text: page.text || '',
-            prompt: page.characterPrompt || page.prompt || '',
-            useCharacter: true,
-            characterPosition: 'auto',
-            backgroundImageUrl:
-              page.backgroundImage?.url || page.characterImage?.url || '',
-            characterFile: null,
-            characterPreview: '',
-            characterUrl: page.characterImage?.url || '',
-            quote: page.quote || page.hebrewQuote || '',
-            cover: page.pageType === 'cover' ? cloneCoverConfig(page.cover) : null,
-          }))
+          (book.pages || []).map((page) => {
+            const promptNeutral = page.characterPrompt || page.prompt || '';
+            const promptMale = page.characterPromptMale || promptNeutral;
+            const promptFemale = page.characterPromptFemale || promptNeutral;
+            return {
+              id: page._id,
+              order: page.order,
+              pageType: page.pageType === 'cover' ? 'cover' : 'story',
+              text: page.text || '',
+              prompt: promptNeutral || promptMale || promptFemale || '',
+              promptNeutral,
+              promptMale,
+              promptFemale,
+              useCharacter: true,
+              characterPosition: 'auto',
+              backgroundImageUrl:
+                page.backgroundImage?.url || page.characterImage?.url || '',
+              characterFile: null,
+              characterPreview: '',
+              characterUrl: page.characterImage?.url || '',
+              quote: page.quote || page.hebrewQuote || '',
+              cover: page.pageType === 'cover' ? cloneCoverConfig(page.cover) : null,
+            };
+          })
         );
       } catch (error) {
         toast.error(`Failed to load book details: ${error.message}`);
@@ -2042,6 +2114,7 @@ function Storybooks() {
     },
     []
   );
+
 
   const disconnectJobStream = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -2507,6 +2580,7 @@ function Storybooks() {
         userId: selectedUserId,
         readerId: selectedReader?._id || selectedUserId,
         readerName: selectedReader?.name || '',
+        readerGender: selectedReader?.gender || '',
         title: storyTitle || `${selectedBook?.name || 'Storybook'}`,
       });
       if (response?.success === false) {
@@ -2565,6 +2639,9 @@ function Storybooks() {
       if (selectedReader?.name) {
         formData.append('readerName', selectedReader.name);
       }
+      if (selectedReader?.gender) {
+        formData.append('readerGender', selectedReader.gender);
+      }
 
       const pagesPayload = pages.map((page) => ({
         bookPageId: page.id,
@@ -2617,6 +2694,10 @@ function Storybooks() {
     const assetSnapshot = JSON.parse(JSON.stringify(asset));
     assetSnapshot.variant = resolveAssetVariant(assetSnapshot);
     const orderedPages = normaliseAssetPages(assetSnapshot.pages);
+
+    if (asset.readerId) {
+      setSelectedUserId(String(asset.readerId));
+    }
 
     setActiveAsset(assetSnapshot);
     setActiveAssetPages(orderedPages);
@@ -2821,7 +2902,11 @@ function Storybooks() {
         selectedBookId,
         assetIdentifier,
         order,
-        { trainingId }
+        {
+          trainingId,
+          readerGender: selectedReader?.gender || '',
+          readerName: selectedReader?.name || '',
+        }
       );
       if (response?.success === false) {
         throw new Error(response?.message || 'Regeneration failed');
@@ -2990,9 +3075,31 @@ function Storybooks() {
 
     setIsRegeneratingPdf(true);
     try {
-      const response = await bookAPI.regenerateStorybookPdf(selectedBookId, assetIdentifier, {
+      const readerIdPayload =
+        selectedReader?._id || (activeAsset.readerId ? String(activeAsset.readerId) : '');
+      const readerNamePayload =
+        selectedReader?.name || activeAsset.readerName || '';
+      const readerGenderPayload =
+        selectedReader?.gender || activeAsset.readerGender || '';
+
+      const regeneratePayload = {
         title: activeAsset.title,
-      });
+      };
+      if (readerIdPayload) {
+        regeneratePayload.readerId = readerIdPayload;
+      }
+      if (readerNamePayload) {
+        regeneratePayload.readerName = readerNamePayload;
+      }
+      if (readerGenderPayload) {
+        regeneratePayload.readerGender = readerGenderPayload;
+      }
+
+      const response = await bookAPI.regenerateStorybookPdf(
+        selectedBookId,
+        assetIdentifier,
+        regeneratePayload
+      );
       if (response?.success === false) {
         throw new Error(response?.message || 'Failed to regenerate PDF');
       }
@@ -3310,6 +3417,7 @@ function Storybooks() {
       getDisplayPageNumber(currentPage?.pageType, currentPage?.order, safeIndex);
     const cacheToken = previewModel?.cacheToken || assetIdentifier;
     const pageRole = currentPage?.pageType || 'story';
+    const currentPageType = pageRole;
     const isRegenerablePage = ['story', 'cover', 'dedication'].includes(pageRole);
     const readablePageRole =
       pageRole === 'cover' ? 'Cover' : pageRole === 'dedication' ? 'Dedication' : null;
@@ -3321,6 +3429,96 @@ function Storybooks() {
       isRegenerablePage &&
       (hasCandidateAssets || hasRankingNotes || Boolean(activeAsset?.trainingId));
     const rankingSummary = (currentPage?.rankingSummary || '').trim();
+    const assetReaderIdString = activeAsset?.readerId
+      ? String(activeAsset.readerId)
+      : '';
+    const selectedReaderIdString = selectedReader?._id || '';
+    const readerLookupId = assetReaderIdString || selectedReaderIdString;
+    const readerProfile = readerLookupId
+      ? users.find((user) => user._id === readerLookupId)
+      : null;
+    const resolvedReaderName =
+      activeAsset?.readerName ||
+      readerProfile?.name ||
+      selectedReader?.name ||
+      '';
+    const resolvedReaderEmail = readerProfile?.email || selectedReader?.email || '';
+    const resolvedReaderGender = normaliseGenderValue(
+      selectedReader?.gender || activeAsset?.readerGender || readerProfile?.gender || ''
+    );
+    const readerGenderLabel = resolvedReaderGender
+      ? resolvedReaderGender.charAt(0).toUpperCase() + resolvedReaderGender.slice(1)
+      : '';
+
+    let promptNeutral = '';
+    let promptMale = '';
+    let promptFemale = '';
+
+    if (currentPage) {
+      if (currentPageType === 'cover') {
+        const coverSource = selectedBook?.coverPage || {};
+        const coverSnapshot = currentPage.coverPage || {};
+        promptNeutral =
+          normalisePromptText(coverSource.characterPrompt) ||
+          normalisePromptText(coverSnapshot.characterPrompt) ||
+          '';
+        promptMale =
+          normalisePromptText(coverSource.characterPromptMale) ||
+          normalisePromptText(coverSnapshot.characterPromptMale) ||
+          '';
+        promptFemale =
+          normalisePromptText(coverSource.characterPromptFemale) ||
+          normalisePromptText(coverSnapshot.characterPromptFemale) ||
+          '';
+      } else if (currentPageType === 'dedication') {
+        const dedicationSource = selectedBook?.dedicationPage || {};
+        const dedicationSnapshot = currentPage.dedicationPage || {};
+        promptNeutral =
+          normalisePromptText(dedicationSource.characterPrompt) ||
+          normalisePromptText(dedicationSnapshot.characterPrompt) ||
+          '';
+        promptMale =
+          normalisePromptText(dedicationSource.characterPromptMale) ||
+          normalisePromptText(dedicationSnapshot.characterPromptMale) ||
+          '';
+        promptFemale =
+          normalisePromptText(dedicationSource.characterPromptFemale) ||
+          normalisePromptText(dedicationSnapshot.characterPromptFemale) ||
+          '';
+      } else {
+        const sourcePage =
+          selectedBook?.pages?.find(
+            (page) =>
+              (page.pageType === 'story' || !page.pageType) && page.order === currentPage.order
+          ) || null;
+        promptNeutral =
+          normalisePromptText(sourcePage?.characterPrompt) ||
+          normalisePromptText(currentPage.prompt) ||
+          '';
+        promptMale =
+          normalisePromptText(sourcePage?.characterPromptMale) ||
+          '';
+        promptFemale =
+          normalisePromptText(sourcePage?.characterPromptFemale) ||
+          '';
+      }
+    }
+
+    if (!promptMale && promptNeutral) {
+      promptMale = promptNeutral;
+    }
+    if (!promptFemale && promptNeutral) {
+      promptFemale = promptNeutral;
+    }
+
+    const resolvedPrompt = resolvePromptForGender(
+      {
+        characterPromptMale: promptMale,
+        characterPromptFemale: promptFemale,
+        characterPrompt: promptNeutral,
+      },
+      resolvedReaderGender
+    );
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -3336,6 +3534,11 @@ function Storybooks() {
                     }`
                   : ' · No page snapshots yet'}
               </h3>
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground/55">
+                <span>Reader: {resolvedReaderName || '—'}</span>
+                <span>Email: {resolvedReaderEmail || '—'}</span>
+                <span>Gender: {readerGenderLabel || '—'}</span>
+              </div>
             </div>
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
               <Button
@@ -3553,6 +3756,44 @@ function Storybooks() {
                         <p className="leading-relaxed">{rankingSummary}</p>
                       </div>
                     ) : null}
+                    <div className="rounded-lg border border-border/60 bg-background p-4 text-sm text-foreground/80">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wide text-foreground/60">
+                        <span className="font-semibold">Prompts</span>
+                        <span className="text-foreground/45">
+                          {resolvedReaderGender
+                            ? `Resolved for ${readerGenderLabel || resolvedReaderGender}`
+                            : 'No reader gender selected'}
+                        </span>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        <div>
+                          <p className="text-xs font-medium text-foreground/55">Active prompt</p>
+                          <p className="mt-1 whitespace-pre-line break-words text-foreground/80">
+                            {resolvedPrompt || 'No prompt stored.'}
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs font-medium text-foreground/55">Male variant</p>
+                            <p className="mt-1 whitespace-pre-line break-words text-foreground/75">
+                              {promptMale || '—'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium text-foreground/55">Female variant</p>
+                            <p className="mt-1 whitespace-pre-line break-words text-foreground/75">
+                              {promptFemale || '—'}
+                            </p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-foreground/55">Neutral fallback</p>
+                          <p className="mt-1 whitespace-pre-line break-words text-foreground/75">
+                            {promptNeutral || '—'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                 {shouldShowCandidateSection ? (
                   hasCandidateAssets ? (
                     <div className="space-y-3 border border-border/50 bg-background/50 p-3 sm:p-4">
@@ -3683,7 +3924,11 @@ function Storybooks() {
     regeneratingOrder,
     isRegeneratingPdf,
     applyingCandidateKey,
-    selectedBook?.name,
+    selectedBook,
+    selectedReader?._id,
+    selectedReader?.name,
+    selectedReader?.gender,
+    users,
     handleRegeneratePage,
     handleRegeneratePdf,
     handleApplyCandidate,
@@ -4395,6 +4640,18 @@ function Storybooks() {
                         ).toLocaleString();
                       const statusLabel = matchingSplit ? 'Split ready' : 'Awaiting confirmation';
                       const statusVariant = matchingSplit ? 'success' : 'outline';
+                      const readerProfile = asset.readerId
+                        ? users.find((user) => user._id === String(asset.readerId))
+                        : null;
+                      const readerDisplayName =
+                        asset.readerName || readerProfile?.name || '—';
+                      const readerDisplayEmail = readerProfile?.email || '—';
+                      const readerDisplayGender = normaliseGenderValue(
+                        asset.readerGender || readerProfile?.gender || ''
+                      );
+                      const readerGenderText = readerDisplayGender
+                        ? readerDisplayGender.charAt(0).toUpperCase() + readerDisplayGender.slice(1)
+                        : '—';
                       return (
                         <div
                           key={id}
@@ -4421,6 +4678,11 @@ function Storybooks() {
                                   {asset.trainingModelName || asset.trainingName}
                                 </p>
                               ) : null}
+                              <div className="pt-1 text-xs text-foreground/55 space-y-0.5">
+                                <p>Reader: {readerDisplayName}</p>
+                                <p>Email: {readerDisplayEmail}</p>
+                                <p>Gender: {readerGenderText}</p>
+                              </div>
                             </div>
                             <Badge variant={statusVariant}>{statusLabel}</Badge>
                           </div>

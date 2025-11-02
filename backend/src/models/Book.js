@@ -73,6 +73,16 @@ const coverPageSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    characterPromptMale: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    characterPromptFemale: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     leftSide: {
       title: { type: String, default: '', trim: true },
       content: { type: String, default: '', trim: true },
@@ -123,6 +133,16 @@ const dedicationPageSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    characterPromptMale: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    characterPromptFemale: {
+      type: String,
+      default: '',
+      trim: true,
+    },
   },
   { _id: false }
 );
@@ -140,6 +160,16 @@ const pageSchema = new mongoose.Schema(
       trim: true,
     },
     characterPrompt: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    characterPromptMale: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    characterPromptFemale: {
       type: String,
       default: '',
       trim: true,
@@ -209,6 +239,7 @@ const pdfAssetSchema = new mongoose.Schema(
     storybookJobId: { type: mongoose.Schema.Types.ObjectId, ref: 'StorybookJob', default: null },
     readerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     readerName: { type: String, default: '' },
+    readerGender: { type: String, default: '', trim: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     variant: {
       type: String,

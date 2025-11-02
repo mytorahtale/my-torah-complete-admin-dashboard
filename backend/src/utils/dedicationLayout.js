@@ -75,23 +75,14 @@ const drawKidImage = (ctx, image) => {
   if (!image) return;
 
   const kidAspect = image.width / image.height;
-  const maxWidth = CANVAS_WIDTH * KID_WIDTH_RATIO;
-  const maxHeight = CANVAS_HEIGHT * KID_HEIGHT_RATIO;
-  const targetAspect = maxWidth / maxHeight;
 
-  let drawWidth;
-  let drawHeight;
+  // Always cover full height, adjust width based on aspect ratio
+  const drawHeight = CANVAS_HEIGHT;
+  const drawWidth = drawHeight * kidAspect;
 
-  if (kidAspect > targetAspect) {
-    drawWidth = maxWidth;
-    drawHeight = drawWidth / kidAspect;
-  } else {
-    drawHeight = maxHeight;
-    drawWidth = drawHeight * kidAspect;
-  }
-
-  const drawX = (HALF_WIDTH - drawWidth) / 2;
-  const drawY = CANVAS_HEIGHT - drawHeight;
+  // Align to right edge of left half, extending leftward
+  const drawX = HALF_WIDTH - drawWidth;
+  const drawY = 0;
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
