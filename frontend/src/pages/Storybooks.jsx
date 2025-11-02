@@ -33,6 +33,9 @@ import {
 } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
@@ -41,12 +44,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/ui/searchable-select';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 const JOB_HISTORY_LIMIT = 10;
+const DEFAULT_LIBRARY_PAGE_SIZE = 6;
+const LIBRARY_PAGE_SIZE_OPTIONS = [6, 12, 24];
+const READY_STATUS_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'awaiting', label: 'Awaiting confirmation' },
+  { value: 'split-ready', label: 'Split ready' },
+];
 
 const getCoverAssetsBaseUrl = () => {
   const apiUrl = API_BASE_URL;
@@ -1915,6 +1922,10 @@ function Storybooks() {
   const [trainings, setTrainings] = useState([]);
   const [selectedTrainingId, setSelectedTrainingId] = useState('');
   const [storybookJobs, setStorybookJobs] = useState([]);
+  const [librarySearchTerm, setLibrarySearchTerm] = useState('');
+  const [libraryStatusFilter, setLibraryStatusFilter] = useState('all');
+  const [libraryPageSize, setLibraryPageSize] = useState(DEFAULT_LIBRARY_PAGE_SIZE);
+  const [libraryPage, setLibraryPage] = useState(1);
   const [isAutoGenerating, setIsAutoGenerating] = useState(false);
   const eventSourceRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -1934,6 +1945,18 @@ function Storybooks() {
     () => users.find((user) => user._id === selectedUserId) || null,
     [selectedUserId, users]
   );
+
+  const selectedTraining = useMemo(
+    () => trainings.find((training) => training._id === selectedTrainingId) || null,
+    [trainings, selectedTrainingId]
+  );
+
+  useEffect(() => {
+    setLibrarySearchTerm('');
+    setLibraryStatusFilter('all');
+    setLibraryPageSize(DEFAULT_LIBRARY_PAGE_SIZE);
+    setLibraryPage(1);
+  }, [selectedBookId]);
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -1995,7 +2018,7 @@ function Storybooks() {
           (book.pages || []).map((page) => ({
             id: page._id,
             order: page.order,
-             pageType: page.pageType === 'cover' ? 'cover' : 'story',
+            pageType: page.pageType === 'cover' ? 'cover' : 'story',
             text: page.text || '',
             prompt: page.characterPrompt || page.prompt || '',
             useCharacter: true,
@@ -2319,6 +2342,73 @@ function Storybooks() {
     });
     return map;
   }, [splitAssets]);
+
+  const readyLibrary = useMemo(() => {
+    return standardAssets
+      .map((asset) => {
+        const identifier = resolveAssetId(asset);
+        const matchingSplit =
+          splitLookup.get(identifier) || (asset.key ? splitLookup.get(asset.key) : null);
+        const sortTimestamp =
+          asset.updatedAt || asset.createdAt || asset.confirmedAt || asset.metadata?.createdAt;
+        return {
+          id: asset._id || asset.key || `ready-${identifier}`,
+          asset,
+          matchingSplit,
+          status: matchingSplit ? 'split-ready' : 'awaiting',
+          sortValue: sortTimestamp ? new Date(sortTimestamp).getTime() : 0,
+        };
+      })
+      .sort((a, b) => b.sortValue - a.sortValue);
+  }, [standardAssets, splitLookup]);
+
+  const filteredReadyLibrary = useMemo(() => {
+    const query = librarySearchTerm.trim().toLowerCase();
+    return readyLibrary.filter((entry) => {
+      if (libraryStatusFilter !== 'all' && entry.status !== libraryStatusFilter) {
+        return false;
+      }
+      if (!query) return true;
+
+      const candidates = [
+        entry.asset.title,
+        entry.asset.metadata?.title,
+        entry.asset.metadata?.readerName,
+        entry.asset.trainingName,
+        entry.asset.trainingModelName,
+      ];
+
+      return candidates.some((candidate) => {
+        if (typeof candidate !== 'string') return false;
+        return candidate.toLowerCase().includes(query);
+      });
+    });
+  }, [readyLibrary, libraryStatusFilter, librarySearchTerm]);
+
+  useEffect(() => {
+    setLibraryPage(1);
+  }, [libraryStatusFilter, librarySearchTerm, libraryPageSize]);
+
+  const totalReadyItems = filteredReadyLibrary.length;
+  const totalReadyPages = Math.max(1, Math.ceil(totalReadyItems / libraryPageSize));
+
+  useEffect(() => {
+    if (libraryPage > totalReadyPages) {
+      setLibraryPage(totalReadyPages);
+    }
+  }, [libraryPage, totalReadyPages]);
+
+  const paginatedReadyLibrary = useMemo(() => {
+    const startIndex = (libraryPage - 1) * libraryPageSize;
+    return filteredReadyLibrary.slice(startIndex, startIndex + libraryPageSize);
+  }, [filteredReadyLibrary, libraryPage, libraryPageSize]);
+
+  const readyRangeStart =
+    totalReadyItems === 0 ? 0 : (libraryPage - 1) * libraryPageSize + 1;
+  const readyRangeEnd =
+    totalReadyItems === 0
+      ? 0
+      : Math.min(totalReadyItems, readyRangeStart + libraryPageSize - 1);
 
   const totalPages = useMemo(() => pages.length, [pages.length]);
   const totalStorybooks = useMemo(() => standardAssets.length, [standardAssets.length]);
@@ -3642,10 +3732,10 @@ function Storybooks() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              Storybook Generator
+              Storybooks
             </h2>
             <p className="mt-1 text-sm text-foreground/60">
-              Compose final PDFs using curated backgrounds, character art, and story text.
+              Generate polished PDFs, monitor automation runs, and keep your confirmed storybooks organised.
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-border/60 px-3 py-1 text-xs uppercase tracking-wide text-foreground/60">
@@ -3994,19 +4084,18 @@ function Storybooks() {
             <Card>
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <CardTitle className="text-xl text-foreground">
-                    {selectedBook.name}
-                  </CardTitle>
+                  <CardTitle className="text-xl text-foreground">{selectedBook.name}</CardTitle>
                   <CardDescription>
                     {selectedBook.description || 'No description provided.'}
                   </CardDescription>
                 </div>
-                <div className="flex gap-2 text-xs text-foreground/55">
-                  <span>{totalPages} pages</span>
-                  <span>{totalStorybooks} storybooks</span>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="default">{totalPages} pages</Badge>
+                  <Badge variant="outline">{totalStorybooks} generated</Badge>
+                  <Badge variant="outline">{totalConfirmedStorybooks} confirmed</Badge>
                 </div>
               </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2">
+              <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,320px)_1fr]">
                 {selectedBook.coverImage?.url ? (
                   <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
                     <img
@@ -4020,22 +4109,30 @@ function Storybooks() {
                     <ImageOff className="h-8 w-8" />
                   </div>
                 )}
-                <div className="space-y-3 text-sm text-foreground/60">
-                  <p>
-                    Fine-tune the narration, set background art, and export a polished PDF ready for sharing.
-                  </p>
-                  <p>
-                    Page backgrounds come from the book setup, so you only need to supply the character art for each reader.
-                  </p>
+                <div className="space-y-4 text-sm leading-relaxed text-foreground/65">
+                  <div className="rounded-xl border border-border/60 bg-card/70 p-4">
+                    <p className="text-sm font-semibold text-foreground">What's included</p>
+                    <p className="mt-2">
+                      Storybook pulls {totalPages} curated pages with narration and backgrounds from the book setup.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-card/70 p-4">
+                    <p className="text-sm font-semibold text-foreground">Reader personalisation</p>
+                    <p className="mt-2">
+                      {selectedReader
+                        ? `Placeholders will be replaced with ${selectedReader.name}'s details.`
+                        : 'Select a reader above to replace {name} placeholders automatically.'}
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
-  
+
             <Card>
               <CardHeader>
                 <CardTitle>Configure pages</CardTitle>
                 <CardDescription>
-                  Update narration and provide character art overlays for each page.
+                  Update narration, supply character art, and preview each page before export.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -4082,7 +4179,7 @@ function Storybooks() {
                         </Select>
                       </div>
                     </div>
-  
+
                     <div className="mt-4 grid gap-4 lg:grid-cols-2">
                       <div className="space-y-3">
                         <Label className="text-xs uppercase tracking-wide text-foreground/60">
@@ -4094,14 +4191,20 @@ function Storybooks() {
                           rows={6}
                           className="resize-none"
                         />
-                        {selectedReader?.name && (containsNamePlaceholder(page.text) || (page.text && page.text.includes('{gender}'))) ? (
+                        {selectedReader?.name &&
+                        (containsNamePlaceholder(page.text) ||
+                          (page.text && page.text.includes('{gender}'))) ? (
                           <p className="text-xs text-foreground/50">
                             Preview with {selectedReader.name}:{' '}
-                            {replacePlaceholders(page.text, selectedReader.name, selectedReader.gender)}
+                            {replacePlaceholders(
+                              page.text,
+                              selectedReader.name,
+                              selectedReader.gender
+                            )}
                           </p>
                         ) : null}
                       </div>
-  
+
                       <div className="space-y-4">
                         <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-foreground/60">
                           <p className="font-medium uppercase tracking-wide text-foreground/55">
@@ -4123,7 +4226,7 @@ function Storybooks() {
                             Backgrounds are fixed per book. Update them in the Books section if needed.
                           </p>
                         </div>
-  
+
                         <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
                           <div className="mb-3 flex items-center justify-between text-xs text-foreground/60">
                             <span className="font-medium uppercase tracking-wide">
@@ -4211,70 +4314,121 @@ function Storybooks() {
                 </Button>
               </CardFooter>
             </Card>
-  
+
             <Card>
-              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <CardTitle>Generated storybooks</CardTitle>
                   <CardDescription>
-                    Download finished PDFs or confirm them once you are happy with the layout.
+                    Filter, confirm, or download the latest PDFs for this book.
                   </CardDescription>
                 </div>
                 <Badge variant="outline">{totalStorybooks} ready</Badge>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {standardAssets.length ? (
-                  standardAssets.map((asset) => {
-                    const assetIdentifier = resolveAssetId(asset);
-                    const matchingSplit =
-                      splitLookup.get(assetIdentifier) || (asset.key ? splitLookup.get(asset.key) : null);
-                    const isConfirming = confirmingAssetId === assetIdentifier;
-                    const confirmedDate = matchingSplit
-                      ? new Date(
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="relative w-full sm:max-w-xs">
+                      <Input
+                        value={librarySearchTerm}
+                        onChange={(event) => setLibrarySearchTerm(event.target.value)}
+                        placeholder="Search by title or reader..."
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {READY_STATUS_OPTIONS.map((option) => (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          size="sm"
+                          variant={libraryStatusFilter === option.value ? 'default' : 'outline'}
+                          onClick={() => setLibraryStatusFilter(option.value)}
+                        >
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs uppercase tracking-wide text-foreground/50">
+                      Page size
+                    </Label>
+                    <Select
+                      value={String(libraryPageSize)}
+                      onValueChange={(value) => setLibraryPageSize(Number(value))}
+                    >
+                      <SelectTrigger className="h-9 w-[100px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LIBRARY_PAGE_SIZE_OPTIONS.map((size) => (
+                          <SelectItem key={size} value={String(size)}>
+                            {size}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {paginatedReadyLibrary.length ? (
+                  <div className="grid gap-3">
+                    {paginatedReadyLibrary.map((entry) => {
+                      const { asset, matchingSplit, id } = entry;
+                      const assetIdentifier = resolveAssetId(asset);
+                      const isConfirming = confirmingAssetId === assetIdentifier;
+                      const pageTotal = asset.pageCount || pages.length;
+                      const sizeLabel = asset.size
+                        ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
+                        : 'Size unknown';
+                      const generatedLabel = asset.createdAt
+                        ? new Date(asset.createdAt).toLocaleString()
+                        : 'recently';
+                      const splitConfirmedLabel =
+                        matchingSplit &&
+                        new Date(
                           matchingSplit.confirmedAt ||
                             matchingSplit.updatedAt ||
                             matchingSplit.createdAt ||
                             Date.now()
-                        )
-                      : null;
-                    return (
-                      <div
-                        key={asset._id || asset.key}
-                        className="rounded-xl border border-border/70 bg-card/70 p-4"
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="font-semibold text-foreground/85">
-                              {asset.title || 'Storybook'}
-                            </p>
-                            <p className="text-xs text-foreground/50">
-                              {asset.pageCount || pages.length} pages ·{' '}
-                              {asset.size
-                                ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
-                                : 'Size unknown'}
-                            </p>
-                            <p className="text-xs text-foreground/45">
-                              Generated{' '}
-                              {asset.createdAt
-                                ? new Date(asset.createdAt).toLocaleString()
-                                : 'recently'}
-                            </p>
-                            {matchingSplit ? (
-                              <p className="text-xs text-emerald-500">
-                                Confirmed{' '}
-                                {confirmedDate ? confirmedDate.toLocaleString() : 'recently'}
+                        ).toLocaleString();
+                      const statusLabel = matchingSplit ? 'Split ready' : 'Awaiting confirmation';
+                      const statusVariant = matchingSplit ? 'success' : 'outline';
+                      return (
+                        <div
+                          key={id}
+                          className="rounded-xl border border-border/70 bg-card/70 p-4"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="space-y-1.5">
+                              <p className="font-semibold text-foreground/85">
+                                {asset.title || 'Storybook'}
                               </p>
-                            ) : (
                               <p className="text-xs text-foreground/50">
-                                Awaiting confirmation
+                                {pageTotal} pages · {sizeLabel}
                               </p>
-                            )}
+                              <p className="text-xs text-foreground/45">
+                                Generated {generatedLabel}
+                              </p>
+                              {matchingSplit ? (
+                                <p className="text-xs text-emerald-500">
+                                  Split confirmed {splitConfirmedLabel || 'recently'}
+                                </p>
+                              ) : null}
+                              {asset.trainingModelName || asset.trainingName ? (
+                                <p className="text-xs text-foreground/50">
+                                  {asset.trainingModelName || asset.trainingName}
+                                </p>
+                              ) : null}
+                            </div>
+                            <Badge variant={statusVariant}>{statusLabel}</Badge>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
                             <Button
                               type="button"
                               size="sm"
-                              variant="secondary"
+                              variant={matchingSplit ? 'secondary' : 'default'}
                               className="gap-1"
                               disabled={isConfirming}
                               onClick={() => handleConfirmStorybook(asset)}
@@ -4282,7 +4436,7 @@ function Storybooks() {
                               {isConfirming ? (
                                 <>
                                   <Loader2 className="h-4 w-4 animate-spin" />
-                                  {matchingSplit ? 'Regenerating…' : 'Confirming…'}
+                                  {matchingSplit ? 'Regenerating...' : 'Confirming...'}
                                 </>
                               ) : matchingSplit ? (
                                 <>
@@ -4317,15 +4471,49 @@ function Storybooks() {
                             </Button>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-foreground/55">
-                    No storybooks yet. Configure your pages above and generate a PDF to see it here.
+                    No storybooks match your filters yet.
                   </div>
                 )}
               </CardContent>
+              <CardFooter className="flex flex-col gap-3 border-t border-border/60 bg-card/60 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-foreground/55">
+                  {totalReadyItems
+                    ? `Showing ${readyRangeStart}-${readyRangeEnd} of ${totalReadyItems}`
+                    : 'No storybooks yet.'}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setLibraryPage((prev) => Math.max(1, prev - 1))}
+                    disabled={libraryPage <= 1 || totalReadyItems === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-foreground/55">
+                    Page {Math.min(libraryPage, totalReadyPages)} of {totalReadyPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setLibraryPage((prev) => Math.min(totalReadyPages, prev + 1))}
+                    disabled={libraryPage >= totalReadyPages || totalReadyItems === 0}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardFooter>
             </Card>
 
             <Card>
@@ -4336,27 +4524,27 @@ function Storybooks() {
                     Split PDFs are stored and ready whenever you need them.
                   </CardDescription>
                 </div>
-                <Badge variant="outline">{totalConfirmedStorybooks} confirmed</Badge>
+                <Badge variant="success">{totalConfirmedStorybooks} confirmed</Badge>
               </CardHeader>
               <CardContent className="space-y-3">
                 {splitAssets.length ? (
                   splitAssets.map((asset) => (
                     <div
                       key={asset._id || asset.key}
-                      className="rounded-xl border border-border/70 bg-card/70 p-4"
+                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4"
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="font-semibold text-foreground/85">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-emerald-900">
                             {asset.title || 'Confirmed storybook'}
                           </p>
-                          <p className="text-xs text-foreground/50">
-                            {asset.pageCount || pages.length} pages ·{' '}
+                          <p className="text-xs text-emerald-800/80">
+                            {(asset.pageCount || pages.length)} pages ·{' '}
                             {asset.size
                               ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
                               : 'Size unknown'}
                           </p>
-                          <div className="mt-1 flex items-center gap-1 text-xs text-emerald-500">
+                          <div className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             <span>
                               Confirmed{' '}
@@ -4379,7 +4567,7 @@ function Storybooks() {
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-foreground/55">
+                  <div className="rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/10 p-6 text-center text-sm text-emerald-800/80">
                     Confirm a storybook to generate a split PDF and keep it ready here.
                   </div>
                 )}

@@ -49,7 +49,6 @@ export const bookAPI = {
   },
   delete: (id) => api.delete(`/books/${id}`),
   updateStatus: (id, status) => api.patch(`/books/${id}/status`, { status }),
-  getStorybooks: (id) => api.get(`/books/${id}/storybooks`),
   generateStorybook: (id, data) =>
     api.post(`/books/${id}/storybooks`, data, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -66,7 +65,6 @@ export const bookAPI = {
   selectStorybookPageCandidate: (bookId, assetId, pageOrder, data = {}) =>
     api.post(`/books/${bookId}/storybooks/${assetId}/pages/${pageOrder}/select`, data),
   getStorybookJobs: (id, params) => api.get(`/books/${id}/storybooks/jobs`, { params }),
-  getStorybookJob: (id, jobId) => api.get(`/books/${id}/storybooks/jobs/${jobId}`),
   generateCoverPreview: (formData) =>
     api.post('/books/cover-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
