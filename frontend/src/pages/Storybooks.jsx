@@ -191,15 +191,61 @@ const containsNamePlaceholder = (value) =>
   typeof value === 'string' ? NAME_PLACEHOLDER_DETECTION.test(value) : false;
 
 const getGenderPronouns = (gender) => {
-  if (!gender) return { subject: '', possessive: '', object: '' };
+  if (!gender) {
+    return {
+      subject: '',
+      object: '',
+      possessiveAdjective: '',
+      possessivePronoun: '',
+    };
+  }
+
   const lowerGender = gender.toLowerCase();
   if (lowerGender === 'male') {
-    return { subject: 'He', possessive: 'His', object: 'Him' };
+    return {
+      subject: 'he',
+      object: 'him',
+      possessiveAdjective: 'his',
+      possessivePronoun: 'his',
+    };
   }
+
   if (lowerGender === 'female') {
-    return { subject: 'She', possessive: 'Hers', object: 'Her' };
+    return {
+      subject: 'she',
+      object: 'her',
+      possessiveAdjective: 'her',
+      possessivePronoun: 'hers',
+    };
   }
-  return { subject: 'They', possessive: 'Their', object: 'Them' };
+
+  return {
+    subject: 'they',
+    object: 'them',
+    possessiveAdjective: 'their',
+    possessivePronoun: 'theirs',
+  };
+};
+
+const applyPlaceholderCasing = (placeholder, value) => {
+  if (!value) return value;
+  const stringValue = String(value);
+  const core = placeholder.replace(/[{}]/g, '');
+  if (!core) return value;
+
+  if (core === core.toUpperCase()) {
+    return stringValue.toUpperCase();
+  }
+
+  if (core === core.toLowerCase()) {
+    return stringValue.toLowerCase();
+  }
+
+  if (core[0] === core[0].toUpperCase()) {
+    return `${stringValue.charAt(0).toUpperCase()}${stringValue.slice(1).toLowerCase()}`;
+  }
+
+  return stringValue;
 };
 
 const replaceNamePlaceholders = (value, replacement) => {
@@ -220,9 +266,17 @@ const replacePlaceholders = (value, readerName, readerGender) => {
   }
   if (readerGender) {
     const pronouns = getGenderPronouns(readerGender);
-    result = result.replace(/\{gender\}/gi, pronouns.subject);
-    result = result.replace(/\{genderpos\}/gi, pronouns.possessive);
-    result = result.replace(/\{genderper\}/gi, pronouns.object);
+    const replaceWithPronoun = (pattern, pronounValue) => {
+      if (!pronounValue) return;
+      result = result.replace(pattern, (match) => applyPlaceholderCasing(match, pronounValue));
+    };
+
+    replaceWithPronoun(/\{gender\}/gi, pronouns.subject);
+    replaceWithPronoun(/\{genderx\}/gi, pronouns.possessivePronoun);
+    replaceWithPronoun(/\{gendery\}/gi, pronouns.object);
+    replaceWithPronoun(/\{genderz\}/gi, pronouns.possessiveAdjective);
+    replaceWithPronoun(/\{genderpos\}/gi, pronouns.possessiveAdjective);
+    replaceWithPronoun(/\{genderper\}/gi, pronouns.object);
   }
   return result;
 };
@@ -2588,7 +2642,7 @@ function Storybooks() {
     });
 
     if (hasNamePlaceholder && !selectedReader?.name) {
-      toast.error('Select a reader to replace {name} placeholders before generating.');
+      toast.error('Select a reader to replace name and gender placeholders before generating.');
       return;
     }
 
@@ -4017,7 +4071,7 @@ function Storybooks() {
                 disabled={!users.length}
               />
               <p className="text-xs text-foreground/50">
-                Replaces any {'{name}'} placeholders in the story text.
+                Replaces any {'{name}'} or gender placeholders in the story text.
               </p>
             </div>
           </CardContent>
@@ -4331,7 +4385,7 @@ function Storybooks() {
                     <p className="mt-2">
                       {selectedReader
                         ? `Placeholders will be replaced with ${selectedReader.name}'s details.`
-                        : 'Select a reader above to replace {name} placeholders automatically.'}
+                        : 'Select a reader above to replace name and gender placeholders automatically.'}
                     </p>
                   </div>
                 </div>
@@ -4352,7 +4406,7 @@ function Storybooks() {
                 <p>
                   {selectedReader
                     ? `Personalises placeholders with ${selectedReader.name}'s details.`
-                    : 'Select a reader to replace {name} placeholders automatically.'}
+                    : 'Select a reader to replace name and gender placeholders automatically.'}
                 </p>
               </CardContent>
               <CardFooter className="flex items-center justify-end border-t border-border/60 bg-card/60 py-4">

@@ -91,15 +91,62 @@ const slugify = (value) =>
     .replace(/^-+|-+$/g, '');
 
 const getGenderPronouns = (gender) => {
-  if (!gender) return { subject: '', possessive: '', object: '' };
+  if (!gender) {
+    return {
+      subject: '',
+      object: '',
+      possessiveAdjective: '',
+      possessivePronoun: '',
+    };
+  }
+
   const lowerGender = gender.toLowerCase();
   if (lowerGender === 'male') {
-    return { subject: 'He', possessive: 'His', object: 'Him' };
+    return {
+      subject: 'he',
+      object: 'him',
+      possessiveAdjective: 'his',
+      possessivePronoun: 'his',
+    };
   }
+
   if (lowerGender === 'female') {
-    return { subject: 'She', possessive: 'Hers', object: 'Her' };
+    return {
+      subject: 'she',
+      object: 'her',
+      possessiveAdjective: 'her',
+      possessivePronoun: 'hers',
+    };
   }
-  return { subject: 'They', possessive: 'Their', object: 'Them' };
+
+  return {
+    subject: 'they',
+    object: 'them',
+    possessiveAdjective: 'their',
+    possessivePronoun: 'theirs',
+  };
+};
+
+const applyPlaceholderCasing = (placeholder, value) => {
+  if (!value) return value;
+  const stringValue = String(value);
+  const core = placeholder.replace(/[{}]/g, '');
+  if (!core) return value;
+
+  if (core === core.toUpperCase()) {
+    return stringValue.toUpperCase();
+  }
+
+  if (core === core.toLowerCase()) {
+    return stringValue.toLowerCase();
+  }
+
+  if (core[0] === core[0].toUpperCase()) {
+    const normalised = stringValue.toLowerCase();
+    return `${normalised.charAt(0).toUpperCase()}${normalised.slice(1)}`;
+  }
+
+  return stringValue;
 };
 
 const replaceReaderPlaceholders = (value, readerName, readerGender) => {
@@ -119,9 +166,17 @@ const replaceReaderPlaceholders = (value, readerName, readerGender) => {
 
   if (readerGender) {
     const pronouns = getGenderPronouns(readerGender);
-    result = result.replace(/\{gender\}/gi, pronouns.subject);
-    result = result.replace(/\{genderpos\}/gi, pronouns.possessive);
-    result = result.replace(/\{genderper\}/gi, pronouns.object);
+    const replacePronoun = (pattern, pronounValue) => {
+      if (!pronounValue) return;
+      result = result.replace(pattern, (match) => applyPlaceholderCasing(match, pronounValue));
+    };
+
+    replacePronoun(/\{gender\}/gi, pronouns.subject);
+    replacePronoun(/\{genderx\}/gi, pronouns.possessivePronoun);
+    replacePronoun(/\{gendery\}/gi, pronouns.object);
+    replacePronoun(/\{genderz\}/gi, pronouns.possessiveAdjective);
+    replacePronoun(/\{genderpos\}/gi, pronouns.possessiveAdjective);
+    replacePronoun(/\{genderper\}/gi, pronouns.object);
   }
 
   return result;
@@ -808,9 +863,16 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
     let result = input.replace(/\{name\}/gi, replacement);
     if (readerGender) {
       const pronouns = getGenderPronouns(readerGender);
-      result = result.replace(/\{gender\}/gi, pronouns.subject);
-      result = result.replace(/\{genderpos\}/gi, pronouns.possessive);
-      result = result.replace(/\{genderper\}/gi, pronouns.object);
+      const replacePronoun = (pattern, pronounValue) => {
+        if (!pronounValue) return;
+        result = result.replace(pattern, (match) => applyPlaceholderCasing(match, pronounValue));
+      };
+      replacePronoun(/\{gender\}/gi, pronouns.subject);
+      replacePronoun(/\{genderx\}/gi, pronouns.possessivePronoun);
+      replacePronoun(/\{gendery\}/gi, pronouns.object);
+      replacePronoun(/\{genderz\}/gi, pronouns.possessiveAdjective);
+      replacePronoun(/\{genderpos\}/gi, pronouns.possessiveAdjective);
+      replacePronoun(/\{genderper\}/gi, pronouns.object);
     }
     return result;
   };

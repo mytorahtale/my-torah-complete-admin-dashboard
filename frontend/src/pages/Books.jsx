@@ -1948,7 +1948,7 @@ const handleRemovePageImage = (index) => {
                       <div>
                         <Label className="text-base">Cover Page Editor</Label>
                         <p className="text-xs text-foreground/50 mt-1">
-                          Design the backcover of your book with customizable text and images. Use {'{name}'} as a dynamic placeholder.
+                          Design the backcover of your book with customizable text and images. Use {'{name}'} and pronoun tags like {'{gender}'}, {'{genderx}'}, {'{gendery}'}, {'{genderz}'} for dynamic personalisation.
                         </p>
                       </div>
 
@@ -2037,7 +2037,7 @@ const handleRemovePageImage = (index) => {
                           </div>
                         </div>
                         <p className="text-xs text-foreground/50">
-                          Leave a field empty to reuse the other prompt. Prompts guide automatic cover character generation and support {'{name}'} placeholders.
+                          Leave a field empty to reuse the other prompt. Prompts guide automatic cover character generation and support {'{name}'} and gender placeholders ({'{gender}'}, {'{genderx}'}, {'{gendery}'}, {'{genderz}'}).
                         </p>
                       </div>
 
@@ -2057,7 +2057,7 @@ const handleRemovePageImage = (index) => {
                             }
                           />
                           <p className="text-xs text-foreground/50">
-                            Use {'{name}'} as a placeholder for the child's name.
+                            Use {'{name}'} or pronoun placeholders ({'{gender}'}, {'{genderx}'}, {'{gendery}'}, {'{genderz}'}) for the child's details.
                           </p>
                         </div>
 
@@ -2073,7 +2073,7 @@ const handleRemovePageImage = (index) => {
                             }
                           />
                           <p className="text-xs text-foreground/50">
-                            Main description text. Use {'{name}'} for dynamic name insertion.
+                            Main description text. Use {'{name}'} and gender placeholders to personalise the story.
                           </p>
                         </div>
 
@@ -2158,7 +2158,7 @@ const handleRemovePageImage = (index) => {
                             }
                           />
                           <p className="text-xs text-foreground/50">
-                            Main title displayed prominently on the right in ALL CAPS. Use {'{name}'} for dynamic name insertion.
+                            Main title displayed prominently on the right in ALL CAPS. Use {'{name}'} and gender placeholders for dynamic personalisation.
                           </p>
                         </div>
 
@@ -2239,7 +2239,7 @@ const handleRemovePageImage = (index) => {
                           </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Prompts guide dedication artwork generation. Leave one blank to reuse the other; {'{name}'} personalises content.
+                          Prompts guide dedication artwork generation. Leave one blank to reuse the other; {'{name}'} and gender placeholders personalise content.
                         </p>
                       </div>
 
@@ -2254,7 +2254,7 @@ const handleRemovePageImage = (index) => {
                             onChange={(e) => handleDedicationFieldChange('title', e.target.value)}
                           />
                           <p className="text-xs text-foreground/50">
-                            Main title displayed on the right. Use {'{name}'} for dynamic name insertion.
+                            Main title displayed on the right. Use {'{name}'} and gender placeholders for dynamic name insertion.
                           </p>
                         </div>
 
