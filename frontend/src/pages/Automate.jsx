@@ -190,13 +190,19 @@ function Automate() {
   }, [debouncedSearch, statusFilter, bookFilter, limit]);
 
   const fetchBooksList = useCallback(async () => {
-    const response = await bookAPI.getAll({ limit: 0 });
-    const resolvedBooks = Array.isArray(response?.data)
-      ? response.data
-      : Array.isArray(response)
-      ? response
-      : [];
-    setBooks(resolvedBooks);
+    try {
+      const response = await bookAPI.getAll({ limit: 0, minimal: true });
+      const resolvedBooks = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+        ? response
+        : [];
+      setBooks(resolvedBooks);
+    } catch (error) {
+      toast.error(`Failed to load books: ${error.message}`);
+      setBooks([]);
+      throw error;
+    }
   }, []);
 
   const fetchRuns = useCallback(
@@ -283,26 +289,22 @@ function Automate() {
   );
 
   useEffect(() => {
-    const initialise = async () => {
-      try {
-        setLoading(true);
-        await fetchBooksList();
-        await fetchRuns({ suppressSpinner: true });
-        hasInitialisedRef.current = true;
-      } catch (error) {
-        // errors already surfaced via toasts
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initialise();
-  }, [fetchBooksList, fetchRuns]);
-
-  useEffect(() => {
-    if (!hasInitialisedRef.current) return;
+    if (!hasInitialisedRef.current) {
+      hasInitialisedRef.current = true;
+      (async () => {
+        try {
+          setLoading(true);
+          await Promise.all([fetchBooksList(), fetchRuns({ suppressSpinner: true })]);
+        } catch (error) {
+          // errors already surfaced via toasts
+        } finally {
+          setLoading(false);
+        }
+      })();
+      return;
+    }
     fetchRuns({ suppressSpinner: false }).catch(() => {});
-  }, [fetchRuns]);
+  }, [fetchBooksList, fetchRuns]);
 
   const scheduleRunRefresh = useCallback(() => {
     if (runRefreshTimeoutRef.current) return;

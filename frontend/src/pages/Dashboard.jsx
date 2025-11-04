@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -17,19 +17,10 @@ import {
   UserCog,
   UserX,
 } from 'lucide-react';
-import { bookAPI, generationAPI, trainingAPI, userAPI } from '@/services/api';
+import { dashboardAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-
-const normaliseCollection = (payload) => {
-  if (!payload) return [];
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload.data)) return payload.data;
-  if (Array.isArray(payload.items)) return payload.items;
-  if (Array.isArray(payload.results)) return payload.results;
-  return [];
-};
 
 const toValidDate = (value) => {
   if (!value) return null;
@@ -121,12 +112,8 @@ function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessages, setErrorMessages] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [collections, setCollections] = useState({
-    books: [],
-    users: [],
-    trainings: [],
-    generations: [],
-  });
+  const [overview, setOverview] = useState(null);
+  const hasFetchedRef = useRef(false);
 
   const fetchOverview = useCallback(async ({ silent = false } = {}) => {
     setErrorMessages([]);
@@ -137,124 +124,74 @@ function Dashboard() {
       setLoading(true);
     }
 
-    const requests = [
-      ['books', () => bookAPI.getAll({ limit: 0 })],
-      ['users', () => userAPI.getAll({ limit: 0 })],
-      ['trainings', () => trainingAPI.getAll({ limit: 0 })],
-      ['generations', () => generationAPI.getAll({ limit: 0 })],
-    ];
-
-    const results = await Promise.allSettled(requests.map(([, request]) => request()));
-    const nextData = {
-      books: [],
-      users: [],
-      trainings: [],
-      generations: [],
-    };
-    const nextErrors = [];
-
-    results.forEach((result, index) => {
-      const [key] = requests[index];
-      if (result.status === 'fulfilled') {
-        nextData[key] = normaliseCollection(result.value);
-      } else {
-        const message = result.reason?.message || `${key} unavailable`;
-        nextErrors.push(`${key}: ${message}`);
-      }
-    });
-
-    setCollections(nextData);
-    setLastUpdated(new Date().toISOString());
-    setErrorMessages(nextErrors);
-    setLoading(false);
-    setRefreshing(false);
+    try {
+      const response = await dashboardAPI.getOverview();
+      const payload = response?.data || response;
+      setOverview(payload);
+      setLastUpdated(payload?.lastUpdated || new Date().toISOString());
+      setErrorMessages(Array.isArray(payload?.errors) ? payload.errors : []);
+    } catch (error) {
+      setErrorMessages([error.message || 'Dashboard data unavailable']);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
   useEffect(() => {
+    if (hasFetchedRef.current) {
+      return;
+    }
+    hasFetchedRef.current = true;
     fetchOverview();
   }, [fetchOverview]);
 
   const bookStats = useMemo(() => {
-    const { books } = collections;
-    const total = books.length;
-    const active = books.filter((book) => book.status === 'active').length;
-    const inactive = books.filter((book) => book.status === 'inactive').length;
-    const generated = collections.generations.filter(
-      (generation) => generation.status === 'succeeded'
-    ).length;
-    const totalPages = books.reduce(
-      (sum, book) => sum + (Array.isArray(book.pages) ? book.pages.length : 0),
-      0
-    );
-    const avgPages = total ? totalPages / total : 0;
+    const stats = overview?.stats?.books || {};
+    const generationSucceeded = overview?.stats?.generations?.succeeded || 0;
     return {
-      total,
-      active,
-      inactive,
-      generated,
-      avgPages,
+      total: stats.total || 0,
+      active: stats.active || 0,
+      inactive: stats.inactive || 0,
+      generated: generationSucceeded,
+      avgPages: stats.averagePages || 0,
     };
-  }, [collections]);
+  }, [overview]);
 
   const trainingStats = useMemo(() => {
-    const { trainings } = collections;
-    const total = trainings.length;
-    const activeStatuses = new Set(['queued', 'starting', 'processing']);
-    const active = trainings.filter((item) => activeStatuses.has(item.status)).length;
-    const failed = trainings.filter((item) => item.status === 'failed');
-    const succeeded = trainings.filter((item) => item.status === 'succeeded');
-    const byUser = new Map();
-    trainings.forEach((training) => {
-      if (!training?.userId) return;
-      const bucket = byUser.get(training.userId) || { attempts: 0, successes: 0, failures: 0 };
-      bucket.attempts += 1;
-      if (training.status === 'succeeded') bucket.successes += 1;
-      if (training.status === 'failed') bucket.failures += 1;
-      byUser.set(training.userId, bucket);
-    });
-    const failedUsers = Array.from(byUser.values()).filter((item) => item.failures > 0).length;
-    const readyUsers = Array.from(byUser.values()).filter((item) => item.successes > 0).length;
-    const successRate = total ? (succeeded.length / total) * 100 : 0;
-    return {
-      total,
-      active,
-      failed: failed.length,
-      failedUsers,
-      readyUsers,
-      successRate,
-    };
-  }, [collections]);
-
-  const userStats = useMemo(() => {
-    const { users } = collections;
-    const total = users.length;
-    const imageAssets = users.reduce(
-      (sum, user) => sum + (Array.isArray(user.imageAssets) ? user.imageAssets.length : 0),
-      0
-    );
-    const avgImages = total ? imageAssets / total : 0;
-    return {
-      total,
-      imageAssets,
-      avgImages,
-    };
-  }, [collections]);
-
-  const generationStats = useMemo(() => {
-    const { generations } = collections;
-    const total = generations.length;
-    const succeeded = generations.filter((item) => item.status === 'succeeded').length;
-    const failed = generations.filter((item) => item.status === 'failed').length;
-    const queued = generations.filter((item) => item.status === 'queued').length;
+    const stats = overview?.stats?.trainings || {};
+    const total = stats.total || 0;
+    const succeeded = stats.succeeded || 0;
     const successRate = total ? (succeeded / Math.max(total, 1)) * 100 : 0;
     return {
       total,
-      succeeded,
-      failed,
-      queued,
+      active: stats.active || 0,
+      failed: stats.failed || 0,
+      failedUsers: stats.failedUsers || 0,
+      readyUsers: stats.readyUsers || 0,
       successRate,
     };
-  }, [collections]);
+  }, [overview]);
+
+  const userStats = useMemo(() => {
+    const stats = overview?.stats?.users || {};
+    return {
+      total: stats.total || 0,
+      imageAssets: stats.totalImages || 0,
+      avgImages: stats.averageImages || 0,
+    };
+  }, [overview]);
+
+  const generationStats = useMemo(() => {
+    const stats = overview?.stats?.generations || {};
+    return {
+      total: stats.total || 0,
+      succeeded: stats.succeeded || 0,
+      failed: stats.failed || 0,
+      queued: stats.queued || 0,
+      successRate: stats.successRate || 0,
+    };
+  }, [overview]);
 
   const statCardValues = useMemo(() => {
     return {
@@ -304,58 +241,31 @@ function Dashboard() {
     };
   }, [bookStats, generationStats, trainingStats, userStats]);
 
+  const activityIconMap = useMemo(
+    () => ({
+      book: BookOpen,
+      training: Flame,
+      generation: Sparkles,
+    }),
+    []
+  );
+
   const activityFeed = useMemo(() => {
-    const events = [];
+    const activities = overview?.activity || [];
+    return activities
+      .map((item) => {
+        const timestamp = toValidDate(item.timestamp);
+        if (!timestamp) return null;
+        return {
+          ...item,
+          icon: activityIconMap[item.type] || RefreshCw,
+          timestamp,
+        };
+      })
+      .filter(Boolean);
+  }, [activityIconMap, overview]);
 
-    collections.books.forEach((book) => {
-      const timestamp = book.updatedAt || book.createdAt;
-      const date = toValidDate(timestamp);
-      if (!date) return;
-      events.push({
-        id: `book-${book._id}`,
-        type: 'Book',
-        icon: BookOpen,
-        title: book.name || 'Untitled book',
-        status: book.status === 'active' ? 'Live' : 'Draft',
-        timestamp: date,
-        href: '/books',
-      });
-    });
-
-    collections.trainings.forEach((training) => {
-      const timestamp = training.updatedAt || training.createdAt;
-      const date = toValidDate(timestamp);
-      if (!date) return;
-      events.push({
-        id: `training-${training._id}`,
-        type: 'Training',
-        icon: Flame,
-        title: training.modelName || 'Training job',
-        status: training.status || 'pending',
-        timestamp: date,
-        href: '/training',
-      });
-    });
-
-    collections.generations.forEach((generation) => {
-      const timestamp = generation.updatedAt || generation.createdAt;
-      const date = toValidDate(timestamp);
-      if (!date) return;
-      events.push({
-        id: `generation-${generation._id}`,
-        type: 'Generation',
-        icon: Sparkles,
-        title: generation.prompt?.slice(0, 48) || 'New generation',
-        status: generation.status || 'queued',
-        timestamp: date,
-        href: '/generate',
-      });
-    });
-
-    return events
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-      .slice(0, 8);
-  }, [collections]);
+  const showSkeleton = loading && !overview;
 
   const healthSummary = useMemo(() => {
     const trainingLoad = trainingStats.total
@@ -455,34 +365,47 @@ function Dashboard() {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight text-foreground">Key metrics</h2>
           <Badge variant="outline" className="bg-white/10 text-foreground/70">
-            {formatNumber(activityFeed.length)} recent updates
+            {showSkeleton ? '—' : `${formatNumber(activityFeed.length)} recent updates`}
           </Badge>
         </div>
         <div className="stat-grid">
-          {STAT_CARDS.map(({ key, label, icon: Icon }) => {
-            const stat = statCardValues[key] ?? {};
-            return (
-              <article key={key} className="stat-card">
-                <div className="flex items-center justify-between">
-                  <p className="stat-card__title">{label}</p>
-                  <span className="rounded-lg bg-secondary p-2">
-                    <Icon className="h-5 w-5 text-foreground/70" />
-                  </span>
-                </div>
-                <p className="stat-card__value">{formatNumber(stat.value)}</p>
-                {stat.delta && (
-                  <p
-                    className={cn(
-                      'stat-card__meta',
-                      stat.tone === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+          {showSkeleton
+            ? Array.from({ length: STAT_CARDS.length }).map((_, index) => (
+                <article key={`stat-skeleton-${index}`} className="stat-card animate-pulse">
+                  <div className="flex items-center justify-between">
+                    <span className="h-4 w-28 rounded bg-muted" />
+                    <span className="h-10 w-10 rounded-lg bg-muted" />
+                  </div>
+                  <div className="mt-4 h-8 w-20 rounded bg-muted" />
+                  <div className="mt-2 h-3 w-24 rounded bg-muted" />
+                </article>
+              ))
+            : STAT_CARDS.map(({ key, label, icon: Icon }) => {
+                const stat = statCardValues[key] ?? {};
+                return (
+                  <article key={key} className="stat-card">
+                    <div className="flex items-center justify-between">
+                      <p className="stat-card__title">{label}</p>
+                      <span className="rounded-lg bg-secondary p-2">
+                        <Icon className="h-5 w-5 text-foreground/70" />
+                      </span>
+                    </div>
+                    <p className="stat-card__value">{formatNumber(stat.value)}</p>
+                    {stat.delta && (
+                      <p
+                        className={cn(
+                          'stat-card__meta',
+                          stat.tone === 'warning'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        )}
+                      >
+                        {stat.delta}
+                      </p>
                     )}
-                  >
-                    {stat.delta}
-                  </p>
-                )}
-              </article>
-            );
-          })}
+                  </article>
+                );
+              })}
         </div>
       </section>
 
@@ -497,34 +420,53 @@ function Dashboard() {
             </div>
           </header>
           <div className="mt-5 space-y-2">
-            {activityFeed.length === 0 && !loading ? (
+            {showSkeleton ? (
+              Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={`activity-skeleton-${index}`}
+                  className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="h-10 w-10 rounded-lg bg-muted" />
+                    <div className="space-y-2">
+                      <div className="h-4 w-32 rounded bg-muted" />
+                      <div className="h-3 w-24 rounded bg-muted" />
+                    </div>
+                  </div>
+                  <span className="h-4 w-4 rounded bg-muted" />
+                </div>
+              ))
+            ) : activityFeed.length === 0 ? (
               <div className="rounded-lg border border-border bg-secondary/50 p-4 text-sm text-muted-foreground">
                 No recent actions. Kick things off with a new book or training run.
               </div>
             ) : (
-              activityFeed.map((event) => (
-                <Link
-                  key={event.id}
-                  to={event.href}
-                  className="group flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 transition-all hover:shadow-md hover:border-foreground/20"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="rounded-lg bg-secondary p-2">
-                      <event.icon className="h-5 w-5 text-foreground/70" />
-                    </span>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {event.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {event.status ? `${event.status} • ` : ''}
-                        {formatRelativeTime(event.timestamp)}
-                      </p>
+              activityFeed.map((event) => {
+                const IconComponent = event.icon || RefreshCw;
+                return (
+                  <Link
+                    key={event.id}
+                    to={event.href}
+                    className="group flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 transition-all hover:shadow-md hover:border-foreground/20"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="rounded-lg bg-secondary p-2">
+                        <IconComponent className="h-5 w-5 text-foreground/70" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {event.title}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {event.status ? `${event.status} • ` : ''}
+                          {formatRelativeTime(event.timestamp)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <ArrowUpRight className="h-4 w-4 text-muted-foreground transition group-hover:text-foreground" />
-                </Link>
-              ))
+                    <ArrowUpRight className="h-4 w-4 text-muted-foreground transition group-hover:text-foreground" />
+                  </Link>
+                );
+              })
             )}
           </div>
         </article>

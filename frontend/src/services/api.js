@@ -140,6 +140,11 @@ export const evalAPI = {
 export const promptAPI = {
   list: (params = {}) => api.get('/prompts', { params }),
   getById: (id) => api.get(`/prompts/${id}`),
+  create: (formData) =>
+    api.post('/prompts', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  update: (id, data) => api.patch(`/prompts/${id}`, data),
   updateQuality: (id, quality) =>
     api.patch(`/prompts/${id}/quality`, { quality }),
   updateTags: (id, tags) =>
@@ -159,6 +164,11 @@ export const automationAPI = {
     }),
   getAll: (params) => api.get('/automation', { params }),
   getById: (id) => api.get(`/automation/${id}`),
+};
+
+// Dashboard API
+export const dashboardAPI = {
+  getOverview: () => api.get('/dashboard/overview'),
 };
 
 export default api;

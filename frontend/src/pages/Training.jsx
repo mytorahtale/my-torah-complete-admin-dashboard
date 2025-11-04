@@ -129,13 +129,18 @@ function Training() {
   }, [debouncedTrainingSearch, trainingStatus, trainingUserFilter, trainingLimit]);
 
   const fetchUsersList = useCallback(async () => {
-    const response = await userAPI.getAll({ limit: 0 });
-    const resolvedUsers = Array.isArray(response?.data)
-      ? response.data
-      : Array.isArray(response)
-      ? response
-      : [];
-    setUsers(resolvedUsers);
+    try {
+      const response = await userAPI.getAll({ limit: 0, minimal: true });
+      const resolvedUsers = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+        ? response
+        : [];
+      setUsers(resolvedUsers);
+    } catch (error) {
+      toast.error(`Failed to load users: ${error.message}`);
+      setUsers([]);
+    }
   }, []);
 
   const fetchTrainings = useCallback(
@@ -165,7 +170,7 @@ function Training() {
           params.userId = trainingUserFilter;
         }
 
-        const response = await trainingAPI.getAll(params);
+        const response = await trainingAPI.getAll({ ...params, minimal: true });
         const fetchedTrainings = Array.isArray(response?.data)
           ? response.data
           : Array.isArray(response)
@@ -237,28 +242,23 @@ function Training() {
     ]
   );
 
-  const fetchData = useCallback(
-    async ({ withSpinner = true } = {}) => {
-      try {
-        if (withSpinner) {
-          setLoading(true);
-        }
-        await Promise.all([fetchUsersList(), fetchTrainings({ silent: true })]);
-        hasInitialisedRef.current = true;
-      } catch (error) {
-        toast.error(`Failed to fetch data: ${error.message}`);
-      } finally {
-        if (withSpinner) {
-          setLoading(false);
-        }
-      }
-    },
-    [fetchUsersList, fetchTrainings]
-  );
+  const shouldSkipNextFetchRef = useRef(false);
 
   useEffect(() => {
-    fetchData({ withSpinner: true });
-  }, [fetchData]);
+    if (hasInitialisedRef.current) return;
+    hasInitialisedRef.current = true;
+    shouldSkipNextFetchRef.current = true;
+    (async () => {
+      try {
+        setLoading(true);
+        await Promise.all([fetchUsersList(), fetchTrainings({ silent: true })]);
+      } catch (error) {
+        // errors already surfaced via toast
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [fetchUsersList, fetchTrainings]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 15000);
@@ -267,6 +267,10 @@ function Training() {
 
   useEffect(() => {
     if (!hasInitialisedRef.current) return;
+    if (shouldSkipNextFetchRef.current) {
+      shouldSkipNextFetchRef.current = false;
+      return;
+    }
     fetchTrainings();
   }, [fetchTrainings]);
 
@@ -962,10 +966,11 @@ function Training() {
               }
             }
             const attemptsLabel = `${training.attempts ?? 0}/${MAX_TRAINING_ATTEMPTS}`;
-            const recentLogs = Array.isArray(training.logs)
-              ? training.logs.slice(-6).reverse()
-              : [];
-            const datasetCount = training.imageAssets?.length || training.imageUrls?.length || 0;
+            const recentLogs = Array.isArray(training.logs) ? training.logs : [];
+            const datasetCount =
+              training.imageAssetCount ??
+              training.imageUrlCount ??
+              (training.imageAssets?.length || training.imageUrls?.length || 0);
             const showCancel = ['queued', 'starting', 'processing'].includes(training.status);
 
             return (
@@ -1082,10 +1087,12 @@ function Training() {
                   )}
                   {training.imageAssets?.length > 0 ? (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs text-foreground/50">
-                        <p className="uppercase tracking-[0.25em] text-foreground/45">Dataset preview</p>
-                        <span className="font-medium">{training.imageAssets.length} files</span>
-                      </div>
+                  <div className="flex items-center justify-between text-xs text-foreground/50">
+                    <p className="uppercase tracking-[0.25em] text-foreground/45">Dataset preview</p>
+                    <span className="font-medium">
+                      {training.imageAssetCount ?? training.imageAssets.length} files
+                    </span>
+                  </div>
                       <div className="grid max-h-64 grid-cols-3 gap-2 overflow-y-auto pr-1">
                         {training.imageAssets.map((asset, index) => {
                           if (!asset?.url) return null;
@@ -1110,7 +1117,9 @@ function Training() {
                     </div>
                   ) : training.imageUrls?.length > 0 ? (
                     <div className="space-y-1 text-xs text-foreground/50">
-                      <p className="uppercase tracking-[0.25em]">Dataset links</p>
+                      <p className="uppercase tracking-[0.25em]">
+                        Dataset links ({training.imageUrlCount ?? training.imageUrls.length})
+                      </p>
                       <ul className="space-y-1">
                         {training.imageUrls.slice(0, 6).map((url) => (
                           <li key={url} className="truncate">

@@ -312,10 +312,12 @@ function Books() {
   );
 
   useEffect(() => {
-    fetchBooks({ withSpinner: !hasInitialisedRef.current });
     if (!hasInitialisedRef.current) {
       hasInitialisedRef.current = true;
+      fetchBooks({ withSpinner: true });
+      return;
     }
+    fetchBooks({ withSpinner: false });
   }, [fetchBooks]);
 
   const totalBooksCount =

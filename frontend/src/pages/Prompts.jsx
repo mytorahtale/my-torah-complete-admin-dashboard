@@ -14,6 +14,8 @@ import {
   Tag,
   CheckCircle2,
   SlidersHorizontal,
+  Save,
+  Pencil,
 } from 'lucide-react';
 import { promptAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -79,6 +81,10 @@ const createUploadItem = (file) => ({
   prompt: '',
   error: null,
   copied: false,
+  recordId: null,
+  lastSavedPrompt: '',
+  isSaving: false,
+  additionalContext: '',
 });
 
 function Prompts() {
@@ -114,6 +120,11 @@ function Prompts() {
   });
   const [qualityUpdatingId, setQualityUpdatingId] = useState(null);
   const [tagEditor, setTagEditor] = useState({
+    id: null,
+    value: '',
+    saving: false,
+  });
+  const [promptEditor, setPromptEditor] = useState({
     id: null,
     value: '',
     saving: false,
@@ -318,6 +329,20 @@ function Prompts() {
     }
   };
 
+  const handleGeneratedPromptChange = useCallback((id, value) => {
+    setUploads((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              prompt: value,
+              copied: false,
+            }
+          : item
+      )
+    );
+  }, []);
+
   const handleHistoryPageSizeChange = useCallback((value) => {
     const numericValue = Number.parseInt(value, 10);
     const fallback = HISTORY_PAGE_SIZE_OPTIONS[0];
@@ -457,6 +482,63 @@ function Prompts() {
     }));
   }, []);
 
+  const startPromptEdit = useCallback((item) => {
+    setPromptEditor({
+      id: item.id,
+      value: item.prompt || '',
+      saving: false,
+    });
+  }, []);
+
+  const cancelPromptEdit = useCallback(() => {
+    setPromptEditor({
+      id: null,
+      value: '',
+      saving: false,
+    });
+  }, []);
+
+  const handlePromptEditorChange = useCallback((event) => {
+    setPromptEditor((prev) => ({
+      ...prev,
+      value: event?.target?.value ?? '',
+    }));
+  }, []);
+
+  const savePromptEdit = useCallback(async () => {
+    if (!promptEditor.id) return;
+    const trimmed = promptEditor.value.trim();
+    if (!trimmed) {
+      toast.error('Prompt text cannot be empty');
+      return;
+    }
+
+    setPromptEditor((prev) => ({ ...prev, saving: true }));
+    try {
+      const response = await promptAPI.update(promptEditor.id, {
+        prompt: trimmed,
+      });
+      const updated = response?.data ?? response;
+      setHistoryItems((prev) =>
+        prev.map((entry) =>
+          entry.id === promptEditor.id
+            ? { ...entry, prompt: updated?.prompt ?? trimmed }
+            : entry
+        )
+      );
+      toast.success('Prompt updated');
+      await fetchPromptHistory({ withSpinner: false });
+      setPromptEditor({
+        id: null,
+        value: '',
+        saving: false,
+      });
+    } catch (error) {
+      toast.error(error.message || 'Unable to update prompt');
+      setPromptEditor((prev) => ({ ...prev, saving: false }));
+    }
+  }, [promptEditor, fetchPromptHistory]);
+
   const handleDeletePrompt = useCallback(
     async (item) => {
       if (!item?.id) return;
@@ -469,6 +551,9 @@ function Prompts() {
         if (tagEditor.id === item.id) {
           cancelTagEdit();
         }
+        if (promptEditor.id === item.id) {
+          cancelPromptEdit();
+        }
         await fetchPromptHistory({ withSpinner: false });
         toast.success('Prompt deleted');
       } catch (error) {
@@ -477,7 +562,7 @@ function Prompts() {
         setIsDeletingId(null);
       }
     },
-    [fetchPromptHistory, tagEditor.id, cancelTagEdit]
+    [fetchPromptHistory, tagEditor.id, cancelTagEdit, promptEditor.id, cancelPromptEdit]
   );
 
   const generatePrompts = async () => {
@@ -492,12 +577,13 @@ function Prompts() {
       return;
     }
 
+    const trimmedAdditionalContext = additionalContext.trim();
     const formData = new FormData();
     uploads.forEach((item) => {
       formData.append('images', item.file);
     });
-    if (additionalContext.trim()) {
-      formData.append('additionalContext', additionalContext.trim());
+    if (trimmedAdditionalContext) {
+      formData.append('additionalContext', trimmedAdditionalContext);
     }
 
     setIsGenerating(true);
@@ -521,6 +607,7 @@ function Prompts() {
               ...item,
               status: 'error',
               error: 'No prompt returned for this image',
+              isSaving: false,
             };
           }
           return {
@@ -529,14 +616,15 @@ function Prompts() {
             prompt: result.prompt,
             error: null,
             copied: false,
-            recordId: result.id || result.promptId,
-            storedImageUrl: result.imageUrl,
-            storedCreatedAt: result.createdAt,
+            isSaving: false,
+            additionalContext:
+              typeof result.additionalContext === 'string'
+                ? result.additionalContext
+                : item.additionalContext || trimmedAdditionalContext || '',
           };
         })
       );
-      toast.success('Prompts generated');
-      await fetchPromptHistory({ withSpinner: false, page: 1 });
+      toast.success('Prompts generated. Review and save to add them to history.');
     } catch (error) {
       console.error('Prompt generation failed:', error);
       toast.error(error.message || 'Failed to generate prompts');
@@ -551,6 +639,119 @@ function Prompts() {
       setIsGenerating(false);
     }
   };
+
+  const handleSaveGeneratedPrompt = useCallback(
+    async (id) => {
+      const target = uploads.find((item) => item.id === id);
+      if (!target) return;
+
+      if (target.isSaving) return;
+
+      const trimmedPrompt = target.prompt?.trim?.() || '';
+      if (!trimmedPrompt) {
+        toast.error('Add prompt text before saving');
+        return;
+      }
+
+      if (target.recordId && target.lastSavedPrompt === target.prompt) {
+        toast('No changes to save');
+        return;
+      }
+
+      if (!target.recordId && !target.file) {
+        toast.error('Missing reference image for this prompt');
+        return;
+      }
+
+      setUploads((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                isSaving: true,
+              }
+            : item
+        )
+      );
+
+      try {
+        if (target.recordId) {
+          const payload = {
+            prompt: trimmedPrompt,
+          };
+          if (typeof target.additionalContext === 'string') {
+            payload.additionalContext = target.additionalContext;
+          }
+          const response = await promptAPI.update(target.recordId, payload);
+          const saved = response?.data ?? response;
+
+          setUploads((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? {
+                    ...item,
+                    prompt: saved?.prompt ?? trimmedPrompt,
+                    lastSavedPrompt: saved?.prompt ?? trimmedPrompt,
+                    additionalContext:
+                      typeof saved?.additionalContext === 'string'
+                        ? saved.additionalContext
+                        : item.additionalContext,
+                    isSaving: false,
+                  }
+                : item
+            )
+          );
+          toast.success('Prompt updated');
+        } else {
+          const formData = new FormData();
+          formData.append('image', target.file);
+          formData.append('prompt', trimmedPrompt);
+          if (typeof target.additionalContext === 'string' && target.additionalContext.trim()) {
+            formData.append('additionalContext', target.additionalContext.trim());
+          }
+          const response = await promptAPI.create(formData);
+          const saved = response?.data ?? response;
+
+          setUploads((prev) =>
+            prev.map((item) =>
+              item.id === id
+                ? {
+                    ...item,
+                    recordId: saved?.id || saved?.promptId || item.recordId,
+                    prompt: saved?.prompt ?? trimmedPrompt,
+                    lastSavedPrompt: saved?.prompt ?? trimmedPrompt,
+                    additionalContext:
+                      typeof saved?.additionalContext === 'string'
+                        ? saved.additionalContext
+                        : item.additionalContext,
+                    isSaving: false,
+                  }
+                : item
+            )
+          );
+          toast.success('Prompt saved');
+        }
+
+        await fetchPromptHistory({ withSpinner: false, page: 1 });
+      } catch (error) {
+        toast.error(
+          error.message ||
+            (target.recordId ? 'Failed to update prompt' : 'Failed to save prompt')
+        );
+        setUploads((prev) =>
+          prev.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  isSaving: false,
+                }
+              : item
+          )
+        );
+      }
+    },
+    [uploads, fetchPromptHistory]
+  );
 
   const handleViewerClose = useCallback(() => {
     setViewerImage(null);
@@ -722,109 +923,161 @@ function Prompts() {
 
           {uploads.length > 0 ? (
             <div className="grid gap-5 sm:grid-cols-2">
-              {uploads.map((item, index) => (
-                <Card key={item.id} className="overflow-hidden border border-border/70 shadow-sm">
-                  <CardContent className="p-0">
-                    <div className="relative">
-                      <button
-                        type="button"
-                        className="group relative w-full aspect-square overflow-hidden bg-secondary"
-                        onClick={() =>
-                          setViewerImage({
-                            src: item.preview,
-                            title: item.file.name,
-                            sizeLabel: formatFileSize(item.file.size),
-                            downloadUrl: item.preview,
-                          })
-                        }
-                      >
-                        <img
-                          src={item.preview}
-                          alt={item.file.name}
-                          className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                        />
-                        <div className="absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/15" />
-                        <span className="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-semibold text-white">
-                          #{index + 1}
-                        </span>
-                        <Maximize2 className="absolute right-3 top-3 h-5 w-5 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-                      </button>
-                    </div>
+              {uploads.map((item, index) => {
+                const trimmedPrompt = item.prompt?.trim?.() || '';
+                const isSaved = Boolean(item.recordId);
+                const hasUnsavedChanges = isSaved
+                  ? item.prompt !== item.lastSavedPrompt
+                  : Boolean(trimmedPrompt);
+                const statusLabel = item.isSaving
+                  ? 'Saving...'
+                  : !isSaved
+                  ? 'Not saved yet'
+                  : hasUnsavedChanges
+                  ? 'Unsaved changes'
+                  : 'Saved to history';
+                const saveButtonDisabled =
+                  item.isSaving || !trimmedPrompt || (isSaved && !hasUnsavedChanges);
+                const saveButtonLabel = item.isSaving
+                  ? 'Saving...'
+                  : !isSaved
+                  ? 'Save prompt'
+                  : hasUnsavedChanges
+                  ? 'Update prompt'
+                  : 'Saved';
 
-                    <div className="space-y-3 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-foreground">{item.file.name}</p>
-                          <p className="text-xs text-muted-foreground">{formatFileSize(item.file.size)}</p>
-                        </div>
-                        <div className="flex flex-shrink-0 items-center gap-2">
-                          <Badge
-                            variant={
-                              item.status === 'complete'
-                                ? 'success'
-                                : item.status === 'error'
-                                ? 'destructive'
-                                : item.status === 'processing'
-                                ? 'secondary'
-                                : 'outline'
-                            }
-                            className="capitalize"
-                          >
-                            {item.status}
-                          </Badge>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={() => removeUpload(item.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                return (
+                  <Card key={item.id} className="overflow-hidden border border-border/70 shadow-sm">
+                    <CardContent className="p-0">
+                      <div className="relative">
+                        <button
+                          type="button"
+                          className="group relative w-full aspect-square overflow-hidden bg-secondary"
+                          onClick={() =>
+                            setViewerImage({
+                              src: item.preview,
+                              title: item.file.name,
+                              sizeLabel: formatFileSize(item.file.size),
+                              downloadUrl: item.preview,
+                            })
+                          }
+                        >
+                          <img
+                            src={item.preview}
+                            alt={item.file.name}
+                            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                          />
+                          <div className="absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/15" />
+                          <span className="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-semibold text-white">
+                            #{index + 1}
+                          </span>
+                          <Maximize2 className="absolute right-3 top-3 h-5 w-5 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+                        </button>
                       </div>
 
-                      {item.error ? (
-                        <div className="rounded-lg border border-destructive/60 bg-destructive/10 px-3 py-2">
-                          <p className="text-xs text-destructive">{item.error}</p>
+                      <div className="space-y-3 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-foreground">{item.file.name}</p>
+                            <p className="text-xs text-muted-foreground">{formatFileSize(item.file.size)}</p>
+                          </div>
+                          <div className="flex flex-shrink-0 items-center gap-2">
+                            <Badge
+                              variant={
+                                item.status === 'complete'
+                                  ? 'success'
+                                  : item.status === 'error'
+                                  ? 'destructive'
+                                  : item.status === 'processing'
+                                  ? 'secondary'
+                                  : 'outline'
+                              }
+                              className="capitalize"
+                            >
+                              {item.status}
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeUpload(item.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                      ) : null}
 
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-sm font-medium text-foreground">Generated prompt</Label>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 gap-1.5"
-                            disabled={!item.prompt}
-                            onClick={() => copyToClipboard(item.id)}
-                          >
-                            {item.copied ? (
-                              <>
-                                <Check className="h-3.5 w-3.5" />
-                                Copied
-                              </>
-                            ) : (
-                              <>
-                                <ClipboardCopy className="h-3.5 w-3.5" />
-                                Copy
-                              </>
-                            )}
-                          </Button>
+                        {item.error ? (
+                          <div className="rounded-lg border border-destructive/60 bg-destructive/10 px-3 py-2">
+                            <p className="text-xs text-destructive">{item.error}</p>
+                          </div>
+                        ) : null}
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm font-medium text-foreground">Generated prompt</Label>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 gap-1.5"
+                              disabled={!item.prompt}
+                              onClick={() => copyToClipboard(item.id)}
+                            >
+                              {item.copied ? (
+                                <>
+                                  <Check className="h-3.5 w-3.5" />
+                                  Copied
+                                </>
+                              ) : (
+                                <>
+                                  <ClipboardCopy className="h-3.5 w-3.5" />
+                                  Copy
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                          <Textarea
+                            value={item.prompt || ''}
+                            onChange={(event) => handleGeneratedPromptChange(item.id, event.target.value)}
+                            placeholder="Generated prompt will appear here..."
+                            className="min-h-[110px] resize-y text-sm"
+                            disabled={item.status !== 'complete'}
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs text-muted-foreground">{statusLabel}</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => handleSaveGeneratedPrompt(item.id)}
+                              disabled={saveButtonDisabled}
+                            >
+                              {item.isSaving ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : saveButtonDisabled && isSaved && !hasUnsavedChanges ? (
+                                <>
+                                  <Check className="h-3.5 w-3.5" />
+                                  Saved
+                                </>
+                              ) : (
+                                <>
+                                  <Save className="h-3.5 w-3.5" />
+                                  {saveButtonLabel}
+                                </>
+                              )}
+                            </Button>
+                          </div>
                         </div>
-                        <Textarea
-                          value={item.prompt || ''}
-                          readOnly
-                          placeholder="Generated prompt will appear here..."
-                          className="min-h-[110px] resize-y text-sm"
-                        />
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           ) : (
             <Card className="border border-dashed border-border/70">
@@ -1053,7 +1306,44 @@ function Prompts() {
                           </Badge>
                         </div>
 
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{item.prompt}</p>
+                        {promptEditor.id === item.id ? (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={promptEditor.value}
+                              onChange={handlePromptEditorChange}
+                              rows={5}
+                              className="resize-y text-sm"
+                            />
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={savePromptEdit}
+                                disabled={promptEditor.saving}
+                              >
+                                {promptEditor.saving ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5" />
+                                )}
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="text-muted-foreground hover:text-foreground"
+                                onClick={cancelPromptEdit}
+                                disabled={promptEditor.saving}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{item.prompt}</p>
+                        )}
 
                         {item.additionalContext ? (
                           <div className="rounded-md border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -1092,6 +1382,18 @@ function Prompts() {
                           >
                             {copiedHistoryId === item.id ? <Check className="h-3.5 w-3.5" /> : <ClipboardCopy className="h-3.5 w-3.5" />}
                             Copy prompt
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => startPromptEdit(item)}
+                            disabled={promptEditor.id === item.id}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit prompt
                           </Button>
 
                           <Button

@@ -133,7 +133,10 @@ exports.getAllTrainings = async (req, res) => {
       to,
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      minimal,
     } = req.query;
+
+    const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
 
     const filter = {};
 
@@ -199,11 +202,38 @@ exports.getAllTrainings = async (req, res) => {
       .populate('userId', 'name email age gender')
       .sort(sort);
 
+    if (isMinimal) {
+      query
+        .select(
+          'status progress attempts modelName modelVersion logsUrl trainingConfig error createdAt updatedAt startedAt completedAt imageAssets imageUrls logs userId'
+        )
+        .lean({ virtuals: false });
+    }
+
     if (numericLimit > 0) {
       query.skip(skip).limit(numericLimit);
     }
 
-    const trainings = await query.exec();
+    let trainings = await query.exec();
+
+    if (isMinimal) {
+      trainings = trainings.map((training) => {
+        const plain = { ...training };
+        const logsArray = Array.isArray(plain.logs) ? plain.logs : [];
+        const imageAssets = Array.isArray(plain.imageAssets) ? plain.imageAssets : [];
+        const imageUrls = Array.isArray(plain.imageUrls) ? plain.imageUrls : [];
+
+        return {
+          ...plain,
+          logs: logsArray.slice(-6).reverse(),
+          logsCount: logsArray.length,
+          imageAssets: imageAssets.slice(0, 12),
+          imageAssetCount: imageAssets.length,
+          imageUrls: imageUrls.slice(0, 12),
+          imageUrlCount: imageUrls.length,
+        };
+      });
+    }
 
     const statusAggregation = await Training.aggregate([
       { $match: filter },

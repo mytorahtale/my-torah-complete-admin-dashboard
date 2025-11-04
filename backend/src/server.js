@@ -15,6 +15,7 @@ const bookRoutes = require('./routes/bookRoutes');
 const promptRoutes = require('./routes/promptRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const automationRoutes = require('./routes/automationRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 const { initialiseAutomationWatchers } = require('./services/automationWorkflow');
 
 // Initialize express app
@@ -46,6 +47,7 @@ app.use('/api/generations', generationRoutes);
 app.use('/api/evals', evalRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/automation', automationRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
@@ -70,6 +72,7 @@ app.get('/', (req, res) => {
       generations: '/api/generations',
       evals: '/api/evals',
       automation: '/api/automation',
+      dashboard: '/api/dashboard',
       health: '/health',
     },
   });

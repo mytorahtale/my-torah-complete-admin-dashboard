@@ -822,6 +822,29 @@ const listAutomationRuns = async (options = {}) => {
   }
 
   pipeline.push({
+    $addFields: {
+      limitedEvents: {
+        $let: {
+          vars: { eventsArray: { $ifNull: ['$events', []] } },
+          in: {
+            $cond: [
+              { $lte: [{ $size: '$$eventsArray' }, 12] },
+              '$$eventsArray',
+              {
+                $slice: [
+                  '$$eventsArray',
+                  { $subtract: [{ $size: '$$eventsArray' }, 12] },
+                  12,
+                ],
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  pipeline.push({
     $project: {
       _id: 1,
       userId: {
@@ -851,10 +874,34 @@ const listAutomationRuns = async (options = {}) => {
       status: 1,
       progress: 1,
       error: 1,
-      steps: 1,
-      trainingSnapshot: 1,
-      storybookSnapshot: 1,
-      events: 1,
+      trainingSnapshot: {
+        $cond: [
+          { $ne: ['$trainingSnapshot', null] },
+          {
+            status: '$trainingSnapshot.status',
+            progress: { $ifNull: ['$trainingSnapshot.progress', 0] },
+            attempts: { $ifNull: ['$trainingSnapshot.attempts', 0] },
+            modelName: '$trainingSnapshot.modelName',
+            modelVersion: '$trainingSnapshot.modelVersion',
+            error: '$trainingSnapshot.error',
+          },
+          null,
+        ],
+      },
+      storybookSnapshot: {
+        $cond: [
+          { $ne: ['$storybookSnapshot', null] },
+          {
+            status: '$storybookSnapshot.status',
+            progress: { $ifNull: ['$storybookSnapshot.progress', 0] },
+            estimatedSecondsRemaining: '$storybookSnapshot.estimatedSecondsRemaining',
+            error: '$storybookSnapshot.error',
+            pdfAsset: '$storybookSnapshot.pdfAsset',
+          },
+          null,
+        ],
+      },
+      events: '$limitedEvents',
       createdAt: 1,
       updatedAt: 1,
     },

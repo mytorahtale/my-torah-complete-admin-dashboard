@@ -118,6 +118,101 @@ const serializePrompt = (doc) => {
   };
 };
 
+exports.createPrompt = async (req, res) => {
+  const file = req.file;
+  const promptRaw = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+
+  if (!file) {
+    return res.status(400).json({
+      success: false,
+      message: 'Upload a reference image to save the prompt.',
+    });
+  }
+
+  if (!promptRaw) {
+    return res.status(400).json({
+      success: false,
+      message: 'Provide prompt text before saving.',
+    });
+  }
+
+  const additionalContextRaw =
+    typeof req.body?.additionalContext === 'string'
+      ? req.body.additionalContext.trim()
+      : '';
+  const negativePromptRaw =
+    typeof req.body?.negativePrompt === 'string'
+      ? req.body.negativePrompt.trim()
+      : '';
+  const providerRaw =
+    typeof req.body?.provider === 'string' ? req.body.provider.trim() : '';
+  const modelRaw =
+    typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+  const qualityRaw =
+    typeof req.body?.quality === 'string' ? req.body.quality.trim().toLowerCase() : '';
+
+  const normalizedAdditionalContext = additionalContextRaw || null;
+  const normalizedNegativePrompt = negativePromptRaw || null;
+  const resolvedProvider = providerRaw || 'openrouter';
+  const resolvedModel = modelRaw || OPENROUTER_MODEL;
+  const allowedQualities = new Set(['neutral', 'good']);
+  const resolvedQuality = allowedQualities.has(qualityRaw)
+    ? qualityRaw
+    : 'neutral';
+
+  const tagsRaw = req.body?.tags;
+  const normalizedTags = normalizeTags(tagsRaw);
+
+  const mimeType = file.mimetype || 'image/jpeg';
+  const size = file.size || 0;
+
+  let uploadResult = null;
+
+  try {
+    const uploadKey = generatePromptImageKey(file.originalname);
+    uploadResult = await uploadBufferToS3(file.buffer, uploadKey, mimeType);
+
+    const promptDocument = await Prompt.create({
+      fileName: file.originalname,
+      mimeType,
+      size,
+      prompt: promptRaw,
+      negativePrompt: normalizedNegativePrompt,
+      additionalContext: normalizedAdditionalContext,
+      s3Key: uploadResult.key,
+      s3Url: uploadResult.url,
+      provider: resolvedProvider,
+      model: resolvedModel,
+      status: 'succeeded',
+      quality: resolvedQuality,
+      tags: normalizedTags,
+      requestContext: {
+        source: 'manual-save',
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: serializePrompt(promptDocument),
+    });
+  } catch (error) {
+    if (uploadResult?.key) {
+      await deleteFromS3(uploadResult.key).catch((cleanupError) =>
+        console.warn(
+          `Failed to clean up prompt asset ${uploadResult.key}: ${cleanupError.message}`
+        )
+      );
+    }
+
+    console.error('Error saving prompt:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save prompt',
+      error: error.message,
+    });
+  }
+};
+
 exports.generatePrompts = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -151,157 +246,87 @@ exports.generatePrompts = async (req, res) => {
         : '';
     const normalizedAdditionalContext = additionalContextRaw.trim() || null;
 
-    const preparedEntries = [];
-    const uploadedKeys = [];
+    const results = [];
 
-    try {
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        const mime = file.mimetype || 'image/jpeg';
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const mime = file.mimetype || 'image/jpeg';
 
-        const uploadKey = generatePromptImageKey(file.originalname);
-        const { key: s3Key, url: s3Url } = await uploadBufferToS3(
-          file.buffer,
-          uploadKey,
-          mime
-        );
-        uploadedKeys.push(s3Key);
+      const base64 = file.buffer.toString('base64');
+      const dataUrl = `data:${mime};base64,${base64}`;
 
-        const base64 = file.buffer.toString('base64');
-        const dataUrl = `data:${mime};base64,${base64}`;
+      const userContent = [];
 
-        const userContent = [];
-
-        if (normalizedAdditionalContext) {
-          userContent.push({
-            type: 'text',
-            text: normalizedAdditionalContext,
-          });
-        }
-
+      if (normalizedAdditionalContext) {
         userContent.push({
           type: 'text',
-          text: 'Use the following reference image to extract visual details. Do not fabricate traits that are not visible.',
-        });
-
-        userContent.push({
-          type: 'image_url',
-          image_url: {
-            url: dataUrl,
-          },
-        });
-
-        const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-            'HTTP-Referer': OPENROUTER_APP_URL,
-            'X-Title': OPENROUTER_APP_NAME,
-          },
-          body: JSON.stringify({
-            model: OPENROUTER_MODEL,
-            messages: [
-              {
-                role: 'system',
-                content: SYSTEM_INSTRUCTION,
-              },
-              {
-                role: 'user',
-                content: userContent,
-              },
-            ],
-            response_format: { type: 'json_object' },
-          }),
-        });
-
-        if (!response.ok) {
-          const errorPayload = await response.text();
-          throw new Error(
-            `OpenRouter request failed (${response.status}): ${errorPayload}`
-          );
-        }
-
-        const payload = await response.json();
-        const choice = payload?.choices?.[0]?.message;
-        const parsed = parseApiResponse(choice?.content);
-        const trimmedPrompt = parsed.prompt?.trim?.() || '';
-        const trimmedNegative = parsed.negative_prompt?.trim?.() || '';
-        const mergedPrompt =
-          trimmedNegative && trimmedNegative.length > 0
-            ? `${trimmedPrompt}${trimmedPrompt.endsWith('.') ? '' : '.'}\nDo not: ${trimmedNegative}`
-            : trimmedPrompt;
-
-        preparedEntries.push({
-          position: index,
-          fileName: file.originalname,
-          mimeType: mime,
-          size: file.size || 0,
-          prompt: mergedPrompt,
-          negativePrompt: trimmedNegative || null,
-          additionalContext: normalizedAdditionalContext,
-          s3Key,
-          s3Url,
-          quality: 'neutral',
-          tags: [],
+          text: normalizedAdditionalContext,
         });
       }
-    } catch (processingError) {
-      if (uploadedKeys.length) {
-        await Promise.allSettled(
-          uploadedKeys.map((key) => deleteFromS3(key))
+
+      userContent.push({
+        type: 'text',
+        text: 'Use the following reference image to extract visual details. Do not fabricate traits that are not visible.',
+      });
+
+      userContent.push({
+        type: 'image_url',
+        image_url: {
+          url: dataUrl,
+        },
+      });
+
+      const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': OPENROUTER_APP_URL,
+          'X-Title': OPENROUTER_APP_NAME,
+        },
+        body: JSON.stringify({
+          model: OPENROUTER_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content: SYSTEM_INSTRUCTION,
+            },
+            {
+              role: 'user',
+              content: userContent,
+            },
+          ],
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.text();
+        throw new Error(
+          `OpenRouter request failed (${response.status}): ${errorPayload}`
         );
       }
-      throw processingError;
+
+      const payload = await response.json();
+      const choice = payload?.choices?.[0]?.message;
+      const parsed = parseApiResponse(choice?.content);
+      const trimmedPrompt = parsed.prompt?.trim?.() || '';
+      const trimmedNegative = parsed.negative_prompt?.trim?.() || '';
+      const mergedPrompt =
+        trimmedNegative && trimmedNegative.length > 0
+          ? `${trimmedPrompt}${trimmedPrompt.endsWith('.') ? '' : '.'}\nDo not: ${trimmedNegative}`
+          : trimmedPrompt;
+
+      results.push({
+        position: index,
+        fileName: file.originalname,
+        mimeType: mime,
+        size: file.size || 0,
+        prompt: mergedPrompt,
+        negativePrompt: trimmedNegative || null,
+        additionalContext: normalizedAdditionalContext,
+      });
     }
-
-    let createdDocs = [];
-    if (preparedEntries.length) {
-      const docsToInsert = preparedEntries.map((entry) => ({
-        fileName: entry.fileName,
-        mimeType: entry.mimeType,
-        size: entry.size,
-        prompt: entry.prompt,
-        negativePrompt: entry.negativePrompt,
-        additionalContext: entry.additionalContext,
-        s3Key: entry.s3Key,
-        s3Url: entry.s3Url,
-        provider: 'openrouter',
-        model: OPENROUTER_MODEL,
-        status: 'succeeded',
-        quality: entry.quality,
-        tags: entry.tags || [],
-        requestContext: {
-          uploadPosition: entry.position,
-          additionalContext: entry.additionalContext,
-        },
-      }));
-
-      try {
-        createdDocs = await Prompt.insertMany(docsToInsert, {
-          ordered: true,
-        });
-      } catch (storageError) {
-        await Promise.allSettled(uploadedKeys.map((key) => deleteFromS3(key)));
-        throw storageError;
-      }
-    }
-
-    const results = createdDocs.map((doc, idx) => ({
-      id: doc._id,
-      promptId: doc._id,
-      position: preparedEntries[idx].position,
-      fileName: doc.fileName,
-      prompt: doc.prompt,
-      imageUrl: doc.s3Url,
-      s3Key: doc.s3Key,
-      size: doc.size,
-      mimeType: doc.mimeType,
-      additionalContext: doc.additionalContext,
-      quality: doc.quality,
-      tags: Array.isArray(doc.tags) ? doc.tags : [],
-      createdAt: doc.createdAt,
-    }));
 
     res.status(200).json({
       success: true,
@@ -463,6 +488,76 @@ exports.getPromptById = async (req, res) => {
     res.status(status).json({
       success: false,
       message: status === 400 ? 'Invalid prompt identifier' : 'Failed to fetch prompt',
+      error: status === 400 ? undefined : error.message,
+    });
+  }
+};
+
+exports.updatePrompt = async (req, res) => {
+  const promptId = req.params.id;
+  const promptRaw =
+    typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : undefined;
+  const additionalContextRaw =
+    typeof req.body?.additionalContext === 'string'
+      ? req.body.additionalContext.trim()
+      : undefined;
+  const negativePromptRaw =
+    typeof req.body?.negativePrompt === 'string'
+      ? req.body.negativePrompt.trim()
+      : undefined;
+
+  if (
+    promptRaw === undefined &&
+    additionalContextRaw === undefined &&
+    negativePromptRaw === undefined
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'Provide prompt text or additional context to update.',
+    });
+  }
+
+  if (promptRaw !== undefined && !promptRaw) {
+    return res.status(400).json({
+      success: false,
+      message: 'Prompt text cannot be empty.',
+    });
+  }
+
+  const updatePayload = {};
+  if (promptRaw !== undefined) {
+    updatePayload.prompt = promptRaw;
+  }
+  if (additionalContextRaw !== undefined) {
+    updatePayload.additionalContext = additionalContextRaw || null;
+  }
+  if (negativePromptRaw !== undefined) {
+    updatePayload.negativePrompt = negativePromptRaw || null;
+  }
+
+  try {
+    const prompt = await Prompt.findByIdAndUpdate(promptId, updatePayload, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!prompt) {
+      return res.status(404).json({
+        success: false,
+        message: 'Prompt not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: serializePrompt(prompt),
+    });
+  } catch (error) {
+    console.error('Error updating prompt:', error);
+    const status = error.name === 'CastError' ? 400 : 500;
+    res.status(status).json({
+      success: false,
+      message: status === 400 ? 'Invalid prompt identifier' : 'Failed to update prompt',
       error: status === 400 ? undefined : error.message,
     });
   }
