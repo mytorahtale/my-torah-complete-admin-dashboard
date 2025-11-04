@@ -1367,7 +1367,18 @@ const buildPagePreviewModel = ({
     };
   }
 
-  const isCharacterOnRight = safeIndex % 2 === 0;
+  const positionSource =
+    typeof page.characterPositionResolved === 'string'
+      ? page.characterPositionResolved
+      : page.characterPosition;
+  const rawPosition =
+    typeof positionSource === 'string' ? positionSource.trim().toLowerCase() : 'auto';
+  let isCharacterOnRight = true;
+  if (rawPosition === 'left') {
+    isCharacterOnRight = false;
+  } else if (rawPosition === 'right') {
+    isCharacterOnRight = true;
+  }
   const backgroundSrc = withCacheBust(
     resolveAssetUrl(page.background),
     `${cacheToken}-background-${pageLabel}`
@@ -1476,6 +1487,18 @@ const StorybookPageSvg = React.memo(
     }
     if (model.pageType === 'dedication') {
       return <DedicationPagePreview model={model} className={className} />;
+    }
+
+    if (model.renderedImageSrc) {
+      return (
+        <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
+          <img
+            src={model.renderedImageSrc}
+            alt={`Story page ${model.pageLabel}`}
+            className="h-full w-full object-cover"
+          />
+        </div>
+      );
     }
 
     const { backgroundSrc, characterSrc, characterFrame, pageLabel, text, hebrew } = model;
@@ -1859,6 +1882,8 @@ const normaliseAssetPages = (pages) => {
         rankingSummary: rankingSummarySource,
         rankingNotes: rankingNotesSource.map((note) => ({ ...note })),
         prompt: pagePrompt,
+        characterPosition: entry?.characterPosition || 'auto',
+        characterPositionResolved: entry?.characterPositionResolved || null,
       };
     })
     .sort((a, b) => {
@@ -2090,7 +2115,8 @@ function Storybooks() {
               promptMale,
               promptFemale,
               useCharacter: true,
-              characterPosition: 'auto',
+              characterPosition: page.characterPosition || 'auto',
+              characterPositionResolved: page.characterPositionResolved || null,
               backgroundImageUrl:
                 page.backgroundImage?.url || page.characterImage?.url || '',
               characterFile: null,
@@ -2373,7 +2399,7 @@ function Storybooks() {
     const snapshot = JSON.parse(JSON.stringify(updatedAsset));
     setActiveAsset(snapshot);
     if (Array.isArray(snapshot.pages) && snapshot.pages.length) {
-      setActiveAssetPages(snapshot.pages);
+    setActiveAssetPages(normaliseAssetPages(snapshot.pages));
     }
   }, [activeAsset, selectedBook?.pdfAssets]);
 

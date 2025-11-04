@@ -191,6 +191,11 @@ const pageSchema = new mongoose.Schema(
       enum: ['story', 'cover', 'dedication'],
       default: 'story',
     },
+    characterPosition: {
+      type: String,
+      enum: ['auto', 'left', 'right'],
+      default: 'auto',
+    },
     cover: {
       type: coverConfigSchema,
       default: null,
@@ -215,6 +220,7 @@ const pageSnapshotSchema = new mongoose.Schema(
     rankingNotes: { type: [rankingNoteSchema], default: [] },
     prompt: { type: String, default: '' },
     pageType: { type: String, enum: ['story', 'cover', 'dedication'], default: 'story' },
+    characterPosition: { type: String, enum: ['auto', 'left', 'right'], default: 'auto' },
     cover: { type: coverConfigSchema, default: null },
     coverPage: { type: coverPageSchema, default: null },
     dedicationPage: { type: dedicationPageSchema, default: null },

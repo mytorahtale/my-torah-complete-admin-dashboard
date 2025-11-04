@@ -24,7 +24,10 @@ import childCharacter from '@/assets/character.png';
 const CANVAS_WIDTH = 842;
 const CANVAS_HEIGHT = 421;
 
-const DEFAULT_TEXT = `Pack your bags, it's time to go, to Israel, where stories flow. Where prophets walked and kings once prayed, and history's treasures never fade.`;
+const DEFAULT_TEXT = `Pack your bags, it's time to go,
+to Israel, where stories flow.
+Where prophets walked and kings once prayed,
+and history's treasures never fade.`;
 
 const DEFAULT_CONFIG = Object.freeze({
   storyText: DEFAULT_TEXT,
@@ -50,6 +53,7 @@ const DEFAULT_CONFIG = Object.freeze({
   overlayMaskWidthFactor: 2.2,
   overlayMaskHeightFactor: 2,
   overlayMaskHardness: 0.82,
+  overlayMaskOffsetX: -20,
   overlayFallbackColor: '#0c204e',
   overlayFallbackOpacity: 0.85,
 });
@@ -76,133 +80,132 @@ const hexToRgba = (hex, alpha = 1) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-const wrapTextToLines = (text, maxWidth, fontSize) => {
+const wrapTextToLines = (text) => {
   if (!text) return [];
-
-  const paragraphs = text.split(/\n/);
-  const lines = [];
-  const avgCharWidth = fontSize * 0.45;
-  const maxCharsPerLine = Math.max(1, Math.floor(maxWidth / Math.max(avgCharWidth, 1)));
-
-  paragraphs.forEach((paragraph, index) => {
-    const trimmed = paragraph.trim();
-    if (!trimmed) {
-      if (index !== paragraphs.length - 1) {
-        lines.push('');
-      }
-      return;
-    }
-
-    const words = trimmed.split(/\s+/);
-    let currentLine = '';
-
-    words.forEach((word) => {
-      const tentative = currentLine ? `${currentLine} ${word}` : word;
-      const estimatedWidth = tentative.length * avgCharWidth;
-
-      if (estimatedWidth <= maxWidth && tentative.length <= maxCharsPerLine) {
-        currentLine = tentative;
-      } else {
-        if (currentLine) {
-          lines.push(currentLine);
-        }
-        if (word.length * avgCharWidth > maxWidth) {
-          lines.push(word);
-          currentLine = '';
-        } else {
-          currentLine = word;
-        }
-      }
-    });
-
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-
-    if (index !== paragraphs.length - 1) {
-      lines.push('');
-    }
-  });
-
+  const lines = text.split(/\r?\n/).map((line) => line.trim());
+  if (lines.length === 0) {
+    return [];
+  }
   return lines;
 };
 
 const buildPreviewData = (config, backgroundSrc, characterSrc) => {
   const width = CANVAS_WIDTH;
   const height = CANVAS_HEIGHT;
+  const merged = { ...DEFAULT_CONFIG, ...config };
 
-  const characterWidth = characterSrc ? width * config.characterWidthRatio : 0;
-  const characterHeight = characterSrc ? height * config.characterHeightRatio : 0;
-  const characterBaseX = config.characterSide === 'right' ? width - characterWidth : 0;
-  const characterX = characterBaseX + config.characterOffsetX;
-  const characterY = height - characterHeight + config.characterOffsetY;
+  const isCharacterOnRight = merged.characterSide !== 'left';
+  const fontSize = merged.textFontSize;
+  const lineHeight = fontSize * merged.textLineHeight;
+
+  let character = null;
+  let charWidth = 0;
+  let charHeight = 0;
+
+  if (characterSrc) {
+    const requestedWidth = Math.max(0, width * merged.characterWidthRatio);
+    const requestedHeight = Math.max(0, height * merged.characterHeightRatio);
+
+    charWidth = clamp(requestedWidth, width * 0.05, width);
+    charHeight = clamp(requestedHeight, height * 0.05, height * 1.5);
+
+    const baseX = isCharacterOnRight ? width - charWidth : 0;
+    const x = clamp(baseX + merged.characterOffsetX, -width * 0.5, width * 1.5 - charWidth);
+    const baseY = height - charHeight;
+    const y = clamp(baseY + merged.characterOffsetY, -height * 0.5, height);
+
+    character = {
+      src: characterSrc,
+      frame: {
+        x,
+        y,
+        width: charWidth,
+        height: charHeight,
+        preserveAspectRatio: isCharacterOnRight ? 'xMaxYMax meet' : 'xMinYMax meet',
+      },
+    };
+  }
 
   const textBlockWidth = Math.min(
-    Math.max(width * config.textBlockWidthRatio, config.textBlockWidthMin),
-    width - config.textMargin * 2
+    Math.max(width * merged.textBlockWidthRatio, merged.textBlockWidthMin),
+    width - merged.textMargin * 2
   );
-  const fontSize = config.textFontSize;
-  const lineHeight = fontSize * config.textLineHeight;
-  const textLines = wrapTextToLines(config.storyText, textBlockWidth, fontSize);
+
+  const textLines = wrapTextToLines(merged.storyText);
   const textHeight = textLines.length * lineHeight;
-  const textBaseX = config.characterSide === 'right'
-    ? config.textMargin
-    : width - textBlockWidth - config.textMargin;
-  const textX = textBaseX + config.textOffsetX;
-  const textBaseline = height * config.textBaselineRatio + config.textOffsetY;
 
-  const rawBgX = textX - config.overlayPaddingLeft;
-  const rawBgY = textBaseline - textHeight - config.overlayPaddingVertical;
-  const rawBgWidth = textBlockWidth + config.overlayPaddingLeft + config.overlayPaddingRight;
-  const rawBgHeight = textHeight + config.overlayPaddingVertical * 2;
+  const baseTextX = isCharacterOnRight
+    ? merged.textMargin
+    : width - textBlockWidth - merged.textMargin;
+  const textX = clamp(
+    baseTextX + merged.textOffsetX,
+    merged.textMargin * 0.5,
+    width - textBlockWidth - merged.textMargin * 0.5
+  );
 
-  const bgX = clamp(rawBgX, 0, width - 1);
-  const bgY = clamp(rawBgY, 0, height - 1);
-  const xOffset = bgX - rawBgX;
-  const yOffset = bgY - rawBgY;
-  const bgWidth = Math.min(Math.max(1, rawBgWidth - xOffset), width - bgX);
-  const bgHeight = Math.min(Math.max(1, rawBgHeight - yOffset), height - bgY);
-  const bgSvgY = height - (bgY + bgHeight);
+  const baseline = clamp(
+    height * merged.textBaselineRatio + merged.textOffsetY,
+    lineHeight,
+    height - merged.textBaselineOffset
+  );
 
-  const maskRx = bgWidth / Math.max(config.overlayMaskWidthFactor, 0.1);
-  const maskRy = bgHeight / Math.max(config.overlayMaskHeightFactor, 0.1);
-  const maskHardness = clamp(config.overlayMaskHardness, 0.01, 0.99);
+  let overlay = null;
+
+  if (textLines.length) {
+    const rawBgX = textX - merged.overlayPaddingLeft;
+    const rawBgY = baseline - textHeight - merged.overlayPaddingVertical;
+    const rawBgWidth = textBlockWidth + merged.overlayPaddingLeft + merged.overlayPaddingRight;
+    const rawBgHeight = textHeight + merged.overlayPaddingVertical * 2;
+
+    const bgX = clamp(rawBgX, 0, width - 1);
+    const bgY = clamp(rawBgY, 0, height - 1);
+    const xOffset = bgX - rawBgX;
+    const yOffset = bgY - rawBgY;
+    const bgWidth = Math.min(Math.max(1, rawBgWidth - xOffset), width - bgX);
+    const bgHeight = Math.min(Math.max(1, rawBgHeight - yOffset), height - bgY);
+
+    const maskCenterPdfX =
+      bgX + bgWidth / 2 + (merged.overlayMaskOffsetX ?? DEFAULT_CONFIG.overlayMaskOffsetX);
+    const maskCenterPdfY = bgY + bgHeight / 2;
+
+    const maskRadiusX =
+      (bgWidth / Math.max(merged.overlayMaskWidthFactor, 0.1)) * 1.12;
+    const maskRadiusY =
+      (bgHeight / Math.max(merged.overlayMaskHeightFactor, 0.1)) * 1.12;
+
+    overlay = {
+      x: bgX,
+      y: height - (bgY + bgHeight),
+      width: bgWidth,
+      height: bgHeight,
+      blur: Math.max(0, merged.overlayBlur),
+      fallbackFill: hexToRgba(
+        merged.overlayFallbackColor,
+        merged.overlayFallbackOpacity
+      ),
+      mask: {
+        centerX: clamp(maskCenterPdfX, bgX, bgX + bgWidth),
+        centerY: height - maskCenterPdfY,
+        radiusX: Math.max(1, maskRadiusX),
+        radiusY: Math.max(1, maskRadiusY),
+        hardness: clamp(merged.overlayMaskHardness, 0.01, 0.99),
+      },
+    };
+  }
 
   return {
     backgroundSrc,
-    character: characterSrc
-      ? {
-          src: characterSrc,
-          frame: {
-            x: characterX,
-            y: characterY,
-            width: characterWidth,
-            height: characterHeight,
-            preserveAspectRatio:
-              config.characterSide === 'right' ? 'xMaxYMax meet' : 'xMinYMax meet',
-          },
-        }
-      : null,
+    character,
     text: textLines.length
       ? {
           lines: textLines,
           x: textX,
-          baseline: textBaseline,
+          baseline,
           fontSize,
           lineHeight,
-          baselineOffset: config.textBaselineOffset,
-          color: config.textColor,
-          overlay: {
-            x: bgX,
-            y: bgSvgY,
-            width: bgWidth,
-            height: bgHeight,
-            blur: Math.max(0, config.overlayBlur),
-            maskRx,
-            maskRy,
-            maskHardness,
-            fallbackFill: hexToRgba(config.overlayFallbackColor, config.overlayFallbackOpacity),
-          },
+          baselineOffset: merged.textBaselineOffset,
+          color: merged.textColor,
+          overlay,
         }
       : null,
   };
@@ -217,7 +220,8 @@ const ConfigurableStoryPageSvg = ({ data }) => {
 
   const { backgroundSrc, character, text } = data;
   const hasOverlay = Boolean(text?.overlay);
-  const maskHardStop = text ? clamp(text.overlay.maskHardness, 0.01, 0.99) : 0.82;
+  const overlayMask = text?.overlay?.mask;
+  const maskHardStop = overlayMask ? clamp(overlayMask.hardness, 0.01, 0.99) : 0.82;
 
   const toSvgY = (pdfY) => CANVAS_HEIGHT - pdfY;
 
@@ -231,12 +235,12 @@ const ConfigurableStoryPageSvg = ({ data }) => {
       preserveAspectRatio="xMidYMid meet"
     >
       <defs>
-        {hasOverlay ? (
+        {hasOverlay && overlayMask ? (
           <>
             <filter id={blurId} x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation={text.overlay.blur} edgeMode="duplicate" />
             </filter>
-            <radialGradient id={`${maskId}-gradient`} cx="0.5" cy="0.5" r="0.5">
+            <radialGradient id={`${maskId}-gradient`}>
               <stop offset="0%" stopColor="white" stopOpacity="1" />
               <stop
                 offset={`${(maskHardStop * 100).toFixed(2)}%`}
@@ -247,10 +251,10 @@ const ConfigurableStoryPageSvg = ({ data }) => {
             </radialGradient>
             <mask id={maskId}>
               <ellipse
-                cx={text.overlay.x + text.overlay.width / 2}
-                cy={text.overlay.y + text.overlay.height / 2}
-                rx={Math.max(1, text.overlay.maskRx)}
-                ry={Math.max(1, text.overlay.maskRy)}
+                cx={overlayMask.centerX}
+                cy={overlayMask.centerY}
+                rx={overlayMask.radiusX}
+                ry={overlayMask.radiusY}
                 fill={`url(#${maskId}-gradient)`}
               />
             </mask>
@@ -495,8 +499,8 @@ const Settings = () => {
                 </div>
                 <Slider
                   value={[config.characterWidthRatio]}
-                  min={0.2}
-                  max={0.6}
+                  min={0.1}
+                  max={0.9}
                   step={0.01}
                   onValueChange={(value) => updateConfig('characterWidthRatio', value[0])}
                 />
@@ -511,9 +515,9 @@ const Settings = () => {
                 </div>
                 <Slider
                   value={[config.characterHeightRatio]}
-                  min={0.4}
-                  max={1}
-                  step={0.02}
+                  min={0.3}
+                  max={1.4}
+                  step={0.01}
                   onValueChange={(value) => updateConfig('characterHeightRatio', value[0])}
                 />
               </div>

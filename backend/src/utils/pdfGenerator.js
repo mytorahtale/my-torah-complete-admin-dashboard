@@ -825,9 +825,20 @@ async function generateStorybookPdf({ title, pages }) {
     const pageData = pagesToRender[index] || {};
     const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     const pageType = pageData.pageType || 'story';
+    pageData.characterPositionResolved = 'auto';
     const isCoverPage = pageType === 'cover';
     const isDedicationPage = pageType === 'dedication';
-    const isCharacterOnRight = index % 2 === 0;
+    const positionPreferenceRaw =
+      typeof pageData.characterPosition === 'string'
+        ? pageData.characterPosition.trim().toLowerCase()
+        : 'auto';
+    const isCharacterOnRight =
+      positionPreferenceRaw === 'right'
+        ? true
+        : positionPreferenceRaw === 'left'
+        ? false
+        : index % 2 === 0;
+    pageData.characterPositionResolved = isCharacterOnRight ? 'right' : 'left';
     let charWidth = 0;
     let charHeight = 0;
     let charX = isCharacterOnRight ? PAGE_WIDTH - PAGE_WIDTH * CHARACTER_MAX_WIDTH_RATIO : 0;

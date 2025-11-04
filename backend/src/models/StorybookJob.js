@@ -84,6 +84,11 @@ const storybookPageSchema = new mongoose.Schema(
       type: imageAssetSchema,
       default: null,
     },
+    characterPosition: {
+      type: String,
+      enum: ['auto', 'left', 'right'],
+      default: 'auto',
+    },
     generationId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Generation',

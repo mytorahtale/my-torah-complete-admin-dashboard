@@ -55,6 +55,12 @@ const STATUS_OPTIONS = [
 
 const BOOK_PAGE_SIZES = [10, 20, 50];
 
+const PAGE_ALIGNMENT_OPTIONS = [
+  { value: 'auto', label: 'Alternate automatically' },
+  { value: 'left', label: 'Character on left' },
+  { value: 'right', label: 'Character on right' },
+];
+
 const defaultCoverConfig = () => ({
   headline: '',
   footer: '',
@@ -74,6 +80,7 @@ const createEmptyPage = () => ({
   previewIsObject: false,
   existingImage: null,
   removeImage: false,
+  characterPosition: 'auto',
   cover: defaultCoverConfig(),
   qr: {
     existing: null,
@@ -504,6 +511,7 @@ function Books() {
                 previewIsObject: false,
                 existingImage: page.backgroundImage || page.characterImage || null,
                 removeImage: false,
+                characterPosition: page.characterPosition || 'auto',
                 cover: {
                   headline: coverConfig?.headline || '',
                   footer: coverConfig?.footer || '',
@@ -760,6 +768,19 @@ const handlePageTypeChange = (index, value) => {
         },
       };
     }
+    return { ...prev, pages: nextPages };
+  });
+};
+
+const handlePageCharacterPositionChange = (index, value) => {
+  setFormState((prev) => {
+    const nextPages = [...prev.pages];
+    const current = nextPages[index];
+    if (!current) return prev;
+    nextPages[index] = {
+      ...current,
+      characterPosition: value,
+    };
     return { ...prev, pages: nextPages };
   });
 };
@@ -1266,6 +1287,7 @@ const handleRemovePageImage = (index) => {
         hasNewImage: Boolean(page.file),
         removeImage: Boolean(page.removeImage) && !page.file,
         pageType: page.pageType,
+        characterPosition: page.characterPosition || 'auto',
         cover: coverConfig,
         hasNewQrImage: page.pageType === 'cover' && Boolean(page.qr?.file),
         removeQrImage:
@@ -1782,6 +1804,28 @@ const handleRemovePageImage = (index) => {
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Character placement</Label>
+                        <Select
+                          value={page.characterPosition || 'auto'}
+                          onValueChange={(value) => handlePageCharacterPositionChange(index, value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Placement" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAGE_ALIGNMENT_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-foreground/50">
+                          "Auto" keeps the alternating layout. Override to force the artwork left or right.
+                        </p>
                       </div>
 
                       <div className="space-y-2">

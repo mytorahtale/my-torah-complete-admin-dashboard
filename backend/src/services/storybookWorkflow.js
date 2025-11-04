@@ -127,6 +127,16 @@ const replaceReaderPlaceholders = (value, readerName, readerGender) => {
   return result;
 };
 
+const normalizeCharacterPosition = (value, fallback = 'auto') => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'left' || normalized === 'right' || normalized === 'auto') {
+      return normalized;
+    }
+  }
+  return fallback;
+};
+
 const createEvent = (type, message, metadata = null) => ({
   type,
   message,
@@ -834,6 +844,11 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
   }
 
   const resolvedPrompt = resolvePromptByGender(bookPage, readerGender);
+  const jobCharacterPosition = normalizeCharacterPosition(jobPage?.characterPosition, null);
+  const resolvedCharacterPosition =
+    jobCharacterPosition !== null
+      ? jobCharacterPosition
+      : normalizeCharacterPosition(bookPage.characterPosition, 'auto');
 
   return {
     order: bookPage.order,
@@ -844,7 +859,7 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
     characterOriginal:
       jobPage.characterAssetOriginal || bookPage.characterImageOriginal || null,
     quote: '',
-    characterPosition: 'auto',
+    characterPosition: resolvedCharacterPosition,
     generationId: jobPage?.generationId || null,
     candidateAssets: sanitizeAssetListForSnapshot(jobPage?.candidateAssets || []),
     selectedCandidateIndex: Number.isFinite(jobPage?.selectedCandidateIndex)
@@ -1680,6 +1695,7 @@ const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
       text: page.text || '',
       backgroundImage: page.backgroundImage,
       pageType: page.pageType === 'cover' ? 'cover' : 'story',
+      characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
       status: 'queued',
       progress: 0,
       events: [createEvent('page-queued', 'Page queued for generation')],
