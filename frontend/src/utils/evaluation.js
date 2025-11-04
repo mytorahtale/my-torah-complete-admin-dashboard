@@ -22,6 +22,16 @@ export async function evaluateImageFile(file) {
     },
   };
 
-  const response = await evalAPI.evaluate(payload);
-  return response.data;
+  const evaluationResponse = await evalAPI.evaluate(payload);
+  const evaluation =
+    evaluationResponse?.data?.evaluation ||
+    evaluationResponse?.evaluation ||
+    evaluationResponse?.data ||
+    evaluationResponse;
+
+  if (!evaluation || typeof evaluation !== 'object') {
+    throw new Error('Evaluator returned malformed response');
+  }
+
+  return evaluation;
 }
