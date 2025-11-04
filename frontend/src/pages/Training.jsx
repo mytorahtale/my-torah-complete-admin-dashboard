@@ -12,6 +12,8 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { userAPI, trainingAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -95,6 +97,7 @@ function Training() {
   const reconnectTimeoutRef = useRef(null);
   const trainingRefreshTimeoutRef = useRef(null);
   const statusMapRef = useRef(new Map());
+  const hasProcessedInitialStreamRef = useRef(false);
   const hasInitialisedRef = useRef(false);
   const [isStreamConnected, setIsStreamConnected] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -116,6 +119,14 @@ function Training() {
     total: 0,
     byStatus: {},
   });
+  const isFetchingTrainingsRef = useRef(false);
+  const pendingFetchOptionsRef = useRef(null);
+  const [trainingLogsState, setTrainingLogsState] = useState({});
+  const trainingLogsStateRef = useRef(trainingLogsState);
+  const userHydrationCacheRef = useRef(new Map());
+  const userHydrationPromisesRef = useRef(new Map());
+  const [selectedUserHydrating, setSelectedUserHydrating] = useState(false);
+  const [selectedUserHydrationError, setSelectedUserHydrationError] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -128,6 +139,54 @@ function Training() {
     setTrainingPage(1);
   }, [debouncedTrainingSearch, trainingStatus, trainingUserFilter, trainingLimit]);
 
+  useEffect(() => {
+    users.forEach((user) => {
+      if (user?._id && Array.isArray(user.imageAssets)) {
+        userHydrationCacheRef.current.set(user._id, user);
+      }
+    });
+  }, [users]);
+
+  const ensureUserHydrated = useCallback(async (userId) => {
+    if (!userId) return null;
+
+    if (userHydrationCacheRef.current.has(userId)) {
+      return userHydrationCacheRef.current.get(userId);
+    }
+
+    if (userHydrationPromisesRef.current.has(userId)) {
+      return userHydrationPromisesRef.current.get(userId);
+    }
+
+    const fetchPromise = userAPI
+      .getById(userId)
+      .then((response) => {
+        const payload = response?.data || response;
+        const userPayload = payload?.data || payload;
+        if (userPayload?._id) {
+          userHydrationCacheRef.current.set(userId, userPayload);
+          setUsers((prev) => {
+            const index = prev.findIndex((user) => user._id === userId);
+            if (index === -1) {
+              return [...prev, userPayload];
+            }
+            const next = [...prev];
+            next[index] = { ...next[index], ...userPayload };
+            return next;
+          });
+        }
+        userHydrationPromisesRef.current.delete(userId);
+        return userPayload;
+      })
+      .catch((error) => {
+        userHydrationPromisesRef.current.delete(userId);
+        throw error;
+      });
+
+    userHydrationPromisesRef.current.set(userId, fetchPromise);
+    return fetchPromise;
+  }, [setUsers]);
+
   const fetchUsersList = useCallback(async () => {
     try {
       const response = await userAPI.getAll({ limit: 0, minimal: true });
@@ -136,12 +195,56 @@ function Training() {
         : Array.isArray(response)
         ? response
         : [];
-      setUsers(resolvedUsers);
+      const enrichedUsers = resolvedUsers.map((user) => {
+        if (!user?._id) return user;
+        const cached = userHydrationCacheRef.current.get(user._id);
+        return cached ? { ...user, ...cached } : user;
+      });
+      setUsers(enrichedUsers);
     } catch (error) {
       toast.error(`Failed to load users: ${error.message}`);
       setUsers([]);
     }
   }, []);
+
+  useEffect(() => {
+    if (!formData.userId) {
+      setSelectedUserHydrating(false);
+      setSelectedUserHydrationError('');
+      return;
+    }
+
+    const cached = userHydrationCacheRef.current.get(formData.userId);
+    const userInState = users.find((candidate) => candidate._id === formData.userId);
+
+    if (cached || (userInState && Array.isArray(userInState.imageAssets))) {
+      setSelectedUserHydrating(false);
+      setSelectedUserHydrationError('');
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedUserHydrating(true);
+    setSelectedUserHydrationError('');
+
+    ensureUserHydrated(formData.userId)
+      .then((payload) => {
+        if (cancelled) return;
+        setSelectedUserHydrating(false);
+        if (!payload?._id) {
+          setSelectedUserHydrationError('Unable to load user details for training.');
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setSelectedUserHydrating(false);
+        setSelectedUserHydrationError(error?.message || 'Failed to load user details');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.userId, users, ensureUserHydrated]);
 
   const fetchTrainings = useCallback(
     async ({ silent = false } = {}) => {
@@ -150,6 +253,12 @@ function Training() {
           clearTimeout(trainingRefreshTimeoutRef.current);
           trainingRefreshTimeoutRef.current = null;
         }
+
+        if (isFetchingTrainingsRef.current) {
+          pendingFetchOptionsRef.current = { silent };
+          return;
+        }
+        isFetchingTrainingsRef.current = true;
 
         if (!silent) {
           setIsFetchingTrainings(true);
@@ -228,8 +337,14 @@ function Training() {
         }
         throw error;
       } finally {
+        isFetchingTrainingsRef.current = false;
         if (!silent) {
           setIsFetchingTrainings(false);
+        }
+        const pendingOptions = pendingFetchOptionsRef.current;
+        pendingFetchOptionsRef.current = null;
+        if (pendingOptions) {
+          fetchTrainings(pendingOptions);
         }
       }
     },
@@ -290,6 +405,8 @@ function Training() {
   const handleTrainingStreamUpdate = useCallback(
     (payload) => {
       const items = Array.isArray(payload) ? payload : payload ? [payload] : [];
+      let shouldRefresh = false;
+
       items.forEach((item) => {
         if (!item?._id || !item.status) {
           return;
@@ -308,8 +425,21 @@ function Training() {
             toast(`Training "${item.modelName || 'model'}" canceled`, { icon: '⚠️' });
           }
         }
+        if (!previousStatus || previousStatus !== item.status || typeof item.progress === 'number') {
+          shouldRefresh = true;
+        }
         statusMapRef.current.set(item._id, item.status);
       });
+
+      if (!shouldRefresh) {
+        return;
+      }
+
+      if (!hasProcessedInitialStreamRef.current) {
+        hasProcessedInitialStreamRef.current = true;
+        return;
+      }
+
       scheduleTrainingRefresh();
     },
     [scheduleTrainingRefresh]
@@ -325,6 +455,7 @@ function Training() {
       eventSourceRef.current = null;
     }
 
+    hasProcessedInitialStreamRef.current = false;
     const streamUrl = `${API_BASE_URL}/trainings/stream/live`;
     const source = new EventSource(streamUrl);
     eventSourceRef.current = source;
@@ -376,6 +507,7 @@ function Training() {
         clearTimeout(trainingRefreshTimeoutRef.current);
         trainingRefreshTimeoutRef.current = null;
       }
+      hasProcessedInitialStreamRef.current = false;
       setIsStreamConnected(false);
     };
   }, [connectEventStream, handleTrainingStreamUpdate]);
@@ -389,6 +521,86 @@ function Training() {
     });
     statusMapRef.current = nextStatuses;
   }, [trainings]);
+
+  useEffect(() => {
+    trainingLogsStateRef.current = trainingLogsState;
+  }, [trainingLogsState]);
+
+  useEffect(() => {
+    setTrainingLogsState((prev) => {
+      const next = {};
+      trainings.forEach((training) => {
+        if (training?._id && prev[training._id]) {
+          next[training._id] = prev[training._id];
+        }
+      });
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [trainings]);
+
+  const handleToggleTrainingLogs = useCallback(
+    async (trainingId) => {
+      const current = trainingLogsStateRef.current[trainingId];
+      if (current?.loading) {
+        return;
+      }
+
+      if (current?.data) {
+        setTrainingLogsState((prev) => ({
+          ...prev,
+          [trainingId]: {
+            ...current,
+            open: !current.open,
+          },
+        }));
+        return;
+      }
+
+      setTrainingLogsState((prev) => ({
+        ...prev,
+        [trainingId]: {
+          open: true,
+          loading: true,
+          error: null,
+          data: null,
+        },
+      }));
+
+      try {
+        const response = await trainingAPI.getById(trainingId);
+        const payload = response?.data || response;
+        const trainingData = payload?.data || payload;
+        const logs = Array.isArray(trainingData?.logs) ? trainingData.logs : [];
+        const logsData = {
+          logs,
+          logsUrl: trainingData?.logsUrl || null,
+          logsCount: Array.isArray(logs) ? logs.length : 0,
+        };
+
+        setTrainingLogsState((prev) => ({
+          ...prev,
+          [trainingId]: {
+            open: true,
+            loading: false,
+            error: null,
+            data: logsData,
+          },
+        }));
+      } catch (error) {
+        toast.error(`Failed to load logs: ${error.message}`);
+        setTrainingLogsState((prev) => ({
+          ...prev,
+          [trainingId]: {
+            open: false,
+            loading: false,
+            error: error.message,
+            data: null,
+          },
+        }));
+      }
+    },
+    []
+  );
 
   const modelCount =
     typeof trainingStatsMeta.total === 'number' && trainingStatsMeta.total >= 0
@@ -429,12 +641,22 @@ function Training() {
   const canGoPrevTraining = trainingPagination.hasPrevPage && !isFetchingTrainings;
   const canGoNextTraining = trainingPagination.hasNextPage && !isFetchingTrainings;
 
-  const selectedUser = useMemo(
-    () => users.find((candidate) => candidate._id === formData.userId),
-    [users, formData.userId]
-  );
+  const selectedUser = useMemo(() => {
+    const base = users.find((candidate) => candidate._id === formData.userId);
+    if (base) return base;
+    return userHydrationCacheRef.current.get(formData.userId) || null;
+  }, [users, formData.userId]);
 
-  const selectedUserAssets = selectedUser?.imageAssets ?? [];
+  const selectedUserAssets = useMemo(() => {
+    if (selectedUser && Array.isArray(selectedUser.imageAssets)) {
+      return selectedUser.imageAssets;
+    }
+    const cached = formData.userId ? userHydrationCacheRef.current.get(formData.userId) : null;
+    if (cached && Array.isArray(cached.imageAssets)) {
+      return cached.imageAssets;
+    }
+    return [];
+  }, [selectedUser, formData.userId]);
   const selectedUserAssetCount = selectedUserAssets.length;
 
   const totalDatasetSize = useMemo(
@@ -464,6 +686,17 @@ function Training() {
     setTrainingPage((prev) => prev + 1);
   }, [trainingPagination.hasNextPage]);
 
+  const handleUserSelect = useCallback(
+    (value) => {
+      setSelectedUserHydrationError('');
+      if (value && !userHydrationCacheRef.current.get(value)) {
+        setSelectedUserHydrating(true);
+      }
+      setFormData((prev) => ({ ...prev, userId: value }));
+    },
+    [setFormData, setSelectedUserHydrationError, setSelectedUserHydrating]
+  );
+
   const handleInputChange = (event) => {
     const { name, value } = event.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -482,7 +715,31 @@ function Training() {
       return;
     }
 
-    if (selectedUserAssetCount === 0) {
+    let resolvedUser = selectedUser;
+    try {
+      if (!resolvedUser || typeof resolvedUser.imageAssets === 'undefined') {
+        resolvedUser = await ensureUserHydrated(formData.userId);
+      }
+    } catch (error) {
+      toast.error(`Failed to load user assets: ${error.message}`);
+      return;
+    }
+
+    if (!resolvedUser) {
+      toast.error('Unable to load user data for training.');
+      return;
+    }
+
+    if (!resolvedUser._id) {
+      toast.error('Selected user details are unavailable. Refresh and try again.');
+      return;
+    }
+
+    setSelectedUserHydrationError('');
+    setSelectedUserHydrating(false);
+
+    const resolvedAssets = Array.isArray(resolvedUser.imageAssets) ? resolvedUser.imageAssets : [];
+    if (resolvedAssets.length === 0) {
       toast.error('This user has no reference photos yet. Upload images on the Users page first.');
       return;
     }
@@ -563,6 +820,8 @@ function Training() {
     setViewerImage(null);
     setShowForm(false);
     setIsSubmitting(false);
+    setSelectedUserHydrating(false);
+    setSelectedUserHydrationError('');
   };
 
   if (loading) {
@@ -745,7 +1004,7 @@ function Training() {
                   <Label htmlFor="userId">Select user *</Label>
                   <Select
                     value={formData.userId}
-                    onValueChange={(value) => setFormData((prev) => ({ ...prev, userId: value }))}
+                    onValueChange={handleUserSelect}
                   >
                     <SelectTrigger id="userId">
                       <SelectValue placeholder="Pick a user" />
@@ -780,14 +1039,27 @@ function Training() {
                     </p>
                     {selectedUser ? (
                       <>
-                        {selectedUserAssetCount < 10 && (
-                          <p className="text-xs text-amber-300">
-                            Fewer than 10 images uploaded. Add more variety for better results.
-                          </p>
+                        {selectedUserHydrating && (
+                          <div className="flex items-center gap-2 text-xs text-foreground/50">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Loading reference photos…
+                          </div>
                         )}
-                        <p className="text-xs text-foreground/45">
-                          Selected: {selectedUserAssetCount} · Total size {formatFileSize(totalDatasetSize)}
-                        </p>
+                        {!selectedUserHydrating && !selectedUserHydrationError && (
+                          <>
+                            {selectedUserAssetCount < 10 && (
+                              <p className="text-xs text-amber-300">
+                                Fewer than 10 images uploaded. Add more variety for better results.
+                              </p>
+                            )}
+                            <p className="text-xs text-foreground/45">
+                              Selected: {selectedUserAssetCount} · Total size {formatFileSize(totalDatasetSize)}
+                            </p>
+                          </>
+                        )}
+                        {selectedUserHydrationError && (
+                          <p className="text-xs text-red-300">{selectedUserHydrationError}</p>
+                        )}
                       </>
                     ) : (
                       <p className="text-xs text-foreground/45">
@@ -796,12 +1068,29 @@ function Training() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{selectedUserAssetCount} images</Badge>
+                    <Badge variant="outline">
+                      {selectedUser
+                        ? selectedUserHydrating
+                          ? 'Loading…'
+                          : selectedUserHydrationError
+                          ? 'Error'
+                          : `${selectedUserAssetCount} images`
+                        : 'Select user'}
+                    </Badge>
                   </div>
                 </div>
 
                 {selectedUser ? (
-                  selectedUserAssetCount > 0 ? (
+                  selectedUserHydrating ? (
+                    <div className="flex items-center gap-2 text-xs text-foreground/50">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Fetching reference photos…
+                    </div>
+                  ) : selectedUserHydrationError ? (
+                    <p className="text-xs text-red-300">
+                      Unable to load reference photos: {selectedUserHydrationError}
+                    </p>
+                  ) : selectedUserAssetCount > 0 ? (
                     <div className="overflow-hidden rounded-xl border border-border/60">
                       <div className="hidden bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground/45 sm:grid sm:grid-cols-[auto,1fr,auto]">
                         <span className="pl-2">Preview</span>
@@ -928,7 +1217,7 @@ function Training() {
           <Button
             variant="outline"
             className="gap-2"
-            onClick={() => fetchData()}
+            onClick={() => fetchTrainings()}
           >
             <RefreshCw className="h-4 w-4" />
             Refresh all
@@ -966,7 +1255,9 @@ function Training() {
               }
             }
             const attemptsLabel = `${training.attempts ?? 0}/${MAX_TRAINING_ATTEMPTS}`;
-            const recentLogs = Array.isArray(training.logs) ? training.logs : [];
+            const logsEntry = trainingLogsState[training._id];
+            const fetchedLogs = logsEntry?.data?.logs || [];
+            const canViewLogs = (training.logsCount ?? 0) > 0 || Boolean(training.hasLogsUrl);
             const datasetCount =
               training.imageAssetCount ??
               training.imageUrlCount ??
@@ -1034,21 +1325,81 @@ function Training() {
                         {completedAt ? <span>Completed {completedAt.toLocaleString()}</span> : null}
                       </div>
                     </div>
-                    <div className="rounded-lg border border-border/60 bg-card/70 p-3">
-                      <p className="text-xs uppercase tracking-[0.25em] text-foreground/45">Logs</p>
-                      {recentLogs.length > 0 ? (
-                        <div className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1 font-mono text-[11px] text-foreground/65">
-                          {recentLogs.map((log, index) => (
-                            <div key={`${log.timestamp || index}-${log.message}`}>
-                              <span className="text-foreground/40">
-                                {formatTimestamp(log.timestamp)} ·
-                              </span>{' '}
-                              {log.message}
-                            </div>
-                          ))}
+                    <div className="rounded-lg border border-border/60 bg-card/70 p-3 space-y-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-xs text-foreground/55">
+                          <span className="uppercase tracking-[0.25em] text-foreground/45">Logs</span>
+                          <span className="ml-2 rounded-full bg-foreground/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-foreground/45">
+                            {training.logsCount ?? 0} entries
+                          </span>
                         </div>
-                      ) : (
-                        <p className="mt-2 text-xs text-foreground/50">Waiting for training logs…</p>
+                        {canViewLogs && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="gap-2"
+                            onClick={() => handleToggleTrainingLogs(training._id)}
+                          >
+                            {logsEntry?.loading ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Loading…
+                              </>
+                            ) : logsEntry?.open ? (
+                              <>
+                                <ChevronUp className="h-3 w-3" />
+                                Hide logs
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="h-3 w-3" />
+                                View logs
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                      {logsEntry?.error && (
+                        <p className="text-xs text-red-300">Failed to load logs: {logsEntry.error}</p>
+                      )}
+                      {logsEntry?.open && (
+                        <>
+                          {logsEntry.loading ? (
+                            <div className="mt-3 space-y-2 font-mono text-[11px] text-foreground/60">
+                              <Skeleton className="h-3 w-full" />
+                              <Skeleton className="h-3 w-[80%]" />
+                              <Skeleton className="h-3 w-[90%]" />
+                            </div>
+                          ) : fetchedLogs.length > 0 ? (
+                            <div className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1 font-mono text-[11px] text-foreground/65">
+                              {fetchedLogs.map((log, index) => (
+                                <div key={`${log.timestamp || index}-${log.message}`}>
+                                  <span className="text-foreground/40">
+                                    {formatTimestamp(log.timestamp)} ·
+                                  </span>{' '}
+                                  {log.message}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-foreground/50">No log entries are available yet.</p>
+                          )}
+                          {logsEntry?.data?.logsUrl && (
+                            <a
+                              href={logsEntry.data.logsUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 inline-flex items-center gap-2 text-xs text-accent hover:text-accent/80"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Open full log
+                            </a>
+                          )}
+                        </>
+                      )}
+                      {!canViewLogs && !logsEntry?.open && (
+                        <p className="mt-2 text-xs text-foreground/50">Logs will appear once the training starts.</p>
                       )}
                     </div>
                   </div>
@@ -1073,17 +1424,6 @@ function Training() {
                     <p className="text-sm text-red-300">
                       {training.error}
                     </p>
-                  )}
-                  {training.logsUrl && (
-                    <a
-                      href={training.logsUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex w-fit items-center gap-2 text-xs text-accent hover:text-accent/80"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      View training logs
-                    </a>
                   )}
                   {training.imageAssets?.length > 0 ? (
                     <div className="space-y-2">

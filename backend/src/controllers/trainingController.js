@@ -198,41 +198,134 @@ exports.getAllTrainings = async (req, res) => {
         : 1;
     const skip = numericLimit > 0 ? (effectivePage - 1) * numericLimit : 0;
 
-    const query = Training.find(filter)
-      .populate('userId', 'name email age gender')
-      .sort(sort);
+    let trainings;
 
     if (isMinimal) {
-      query
-        .select(
-          'status progress attempts modelName modelVersion logsUrl trainingConfig error createdAt updatedAt startedAt completedAt imageAssets imageUrls logs userId'
-        )
-        .lean({ virtuals: false });
-    }
+      const pipeline = [
+        { $match: filter },
+        { $sort: sort },
+      ];
 
-    if (numericLimit > 0) {
-      query.skip(skip).limit(numericLimit);
-    }
+      if (numericLimit > 0) {
+        pipeline.push({ $skip: skip }, { $limit: numericLimit });
+      }
 
-    let trainings = await query.exec();
-
-    if (isMinimal) {
-      trainings = trainings.map((training) => {
-        const plain = { ...training };
-        const logsArray = Array.isArray(plain.logs) ? plain.logs : [];
-        const imageAssets = Array.isArray(plain.imageAssets) ? plain.imageAssets : [];
-        const imageUrls = Array.isArray(plain.imageUrls) ? plain.imageUrls : [];
-
-        return {
-          ...plain,
-          logs: logsArray.slice(-6).reverse(),
-          logsCount: logsArray.length,
-          imageAssets: imageAssets.slice(0, 12),
-          imageAssetCount: imageAssets.length,
-          imageUrls: imageUrls.slice(0, 12),
-          imageUrlCount: imageUrls.length,
-        };
+      pipeline.push({
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'user',
+          pipeline: [
+            {
+              $project: {
+                name: 1,
+                email: 1,
+                age: 1,
+                gender: 1,
+              },
+            },
+          ],
+        },
       });
+
+      pipeline.push({
+        $addFields: {
+          logsCount: {
+            $size: {
+              $ifNull: ['$logs', []],
+            },
+          },
+          hasLogsUrl: {
+            $cond: [{ $ifNull: ['$logsUrl', false] }, true, false],
+          },
+          imageAssetCount: {
+            $size: {
+              $ifNull: ['$imageAssets', []],
+            },
+          },
+          imageUrlCount: {
+            $size: {
+              $ifNull: ['$imageUrls', []],
+            },
+          },
+          userId: { $first: '$user' },
+          imageAssetPreview: {
+            $slice: [
+              {
+                $ifNull: ['$imageAssets', []],
+              },
+              12,
+            ],
+          },
+          imageUrlPreview: {
+            $slice: [
+              {
+                $ifNull: ['$imageUrls', []],
+              },
+              12,
+            ],
+          },
+        },
+      });
+
+      pipeline.push({
+        $project: {
+          _id: 1,
+          replicateTrainingId: 1,
+          modelVersion: 1,
+          modelName: 1,
+          status: 1,
+          progress: 1,
+          attempts: 1,
+          hasLogsUrl: 1,
+          error: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          startedAt: 1,
+          completedAt: 1,
+          logsCount: 1,
+          imageAssets: {
+            $map: {
+              input: '$imageAssetPreview',
+              as: 'asset',
+              in: {
+                _id: '$$asset._id',
+                key: '$$asset.key',
+                url: '$$asset.url',
+                size: '$$asset.size',
+                contentType: '$$asset.contentType',
+                uploadedAt: '$$asset.uploadedAt',
+                originalName: '$$asset.originalName',
+              },
+            },
+          },
+          imageAssetCount: 1,
+          imageUrls: '$imageUrlPreview',
+          imageUrlCount: 1,
+          trainingConfig: {
+            source: '$trainingConfig.source',
+            zipUrl: '$trainingConfig.zipUrl',
+            steps: '$trainingConfig.steps',
+            learningRate: '$trainingConfig.learningRate',
+            batchSize: '$trainingConfig.batchSize',
+            triggerWord: '$trainingConfig.triggerWord',
+          },
+          userId: 1,
+        },
+      });
+
+      trainings = await Training.aggregate(pipeline);
+    } else {
+      const query = Training.find(filter)
+        .populate('userId', 'name email age gender')
+        .sort(sort);
+
+      if (numericLimit > 0) {
+        query.skip(skip).limit(numericLimit);
+      }
+
+      trainings = await query.exec();
     }
 
     const statusAggregation = await Training.aggregate([
