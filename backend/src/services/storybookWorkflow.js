@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const User = require('../models/User');
@@ -43,6 +44,15 @@ const STORYBOOK_PAGE_RETRY_BACKOFF_FACTOR = Math.max(
 );
 
 const generationWaiters = new Map();
+
+const buildPreviewBatchId = () => {
+  const timePart = Date.now().toString(36);
+  const randomPart =
+    typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+      : Math.random().toString(36).slice(2, 10);
+  return `${timePart}-${randomPart}`;
+};
 
 subscribeToGenerationUpdates((payload) => {
   if (!payload?._id) return;
@@ -878,7 +888,7 @@ const buildPdfAsset = async ({ book, job, pages }) => {
   const bookSlug = book.slug || `${slugify(book.name)}-${book._id.toString().slice(-6)}`;
   const pdfKey = generateBookPdfKey(bookSlug, job.title || `${book.name} Storybook`);
   const { url } = await uploadBufferToS3(buffer, pdfKey, 'application/pdf', { acl: 'public-read' });
-  const baseTimestamp = Date.now();
+  const previewBatchId = buildPreviewBatchId();
 
   const renderedUploads = await Promise.all(
     (renderedPages || []).map(async ({ index, type, buffer: pageBuffer }, position) => {
@@ -889,7 +899,7 @@ const buildPdfAsset = async ({ book, job, pages }) => {
       const safeIndex = Number.isInteger(normalizedIndex) ? normalizedIndex : position;
       const typeSlug =
         typeof type === 'string' && type.trim() ? type.trim().toLowerCase() : 'page';
-      const imageKey = `books/${bookSlug}/storybook-previews/${baseTimestamp}-${safeIndex + 1}-${typeSlug}.png`;
+      const imageKey = `books/${bookSlug}/storybook-previews/${previewBatchId}-${safeIndex + 1}-${typeSlug}.png`;
       const uploadMeta = await uploadBufferToS3(pageBuffer, imageKey, 'image/png', {
         acl: 'public-read',
       });

@@ -312,7 +312,7 @@ const attachFreshSignedUrl = async (asset) => {
 };
 
 const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
-  const { bookPages = [] } = options;
+  const { bookPages = [], preferSnapshotAssets = false } = options;
   const bookPagesArray = Array.isArray(bookPages) ? bookPages : [];
   const bookPagesById = new Map();
   const bookPagesByOrder = new Map();
@@ -339,38 +339,65 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
         (Number.isFinite(pageOrder) && bookPagesByOrder.get(pageOrder)) ||
         null;
 
-      // Prefer the most up-to-date book assets (which may have background removal applied after snapshot creation).
-      const backgroundSource =
-        (bookPageCandidate && bookPageCandidate.backgroundImage) || clonedPage.background;
+      const pickAsset = (snapshotValue, bookValue) =>
+        preferSnapshotAssets ? snapshotValue || bookValue : bookValue || snapshotValue;
+
+      const backgroundSource = pickAsset(
+        clonedPage.background,
+        bookPageCandidate?.backgroundImage
+      );
       const resolvedBackground = await attachFreshSignedUrl(backgroundSource);
 
-      // ALWAYS prefer the character asset stored on the book page (which reflects background removal).
-      // The book page characterImage is the source of truth after background removal has been applied.
       let characterSource = null;
-      if (bookPageCandidate?.characterImage) {
-        // Use book page character image (may have backgroundRemoved = true)
+      if (preferSnapshotAssets) {
+        characterSource =
+          clonedPage.character ||
+          bookPageCandidate?.characterImage ||
+          null;
+      } else if (bookPageCandidate?.characterImage) {
         characterSource = bookPageCandidate.characterImage;
       } else if (clonedPage.character) {
-        // Fallback to snapshot character only if book page has none
         characterSource = clonedPage.character;
       }
+
       const resolvedCharacter = await attachFreshSignedUrl(characterSource);
 
-      const originalSource =
-        clonedPage.characterOriginal ||
-        bookPageCandidate?.characterImageOriginal ||
-        // If the snapshot predates background removal, keep a reference to the original upload.
-        (!bookPageCandidate?.characterImage?.backgroundRemoved
-          ? bookPageCandidate?.characterImage
-          : null);
+      const resolveOriginalSource = () => {
+        if (clonedPage.characterOriginal) {
+          return clonedPage.characterOriginal;
+        }
+        if (bookPageCandidate?.characterImageOriginal) {
+          return bookPageCandidate.characterImageOriginal;
+        }
+        if (preferSnapshotAssets) {
+          if (clonedPage.character && !clonedPage.character.backgroundRemoved) {
+            return clonedPage.character;
+          }
+          if (
+            bookPageCandidate?.characterImage &&
+            !bookPageCandidate.characterImage.backgroundRemoved
+          ) {
+            return bookPageCandidate.characterImage;
+          }
+          return null;
+        }
+        if (
+          bookPageCandidate?.characterImage &&
+          !bookPageCandidate.characterImage.backgroundRemoved
+        ) {
+          return bookPageCandidate.characterImage;
+        }
+        return null;
+      };
+
+      const originalSource = resolveOriginalSource();
       const resolvedCharacterOriginal = await attachFreshSignedUrl(originalSource);
 
       const resolvedCandidateAssets = Array.isArray(clonedPage.candidateAssets)
         ? await Promise.all(clonedPage.candidateAssets.map((asset) => attachFreshSignedUrl(asset)))
         : [];
 
-      const coverSource =
-        (bookPageCandidate && bookPageCandidate.cover) || clonedPage.cover || null;
+      const coverSource = pickAsset(clonedPage.cover, bookPageCandidate?.cover || null);
       let resolvedCover = null;
       if (coverSource) {
         const coverClone = clonePlainObject(coverSource) || {};
@@ -402,22 +429,22 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
           coverPageClone.characterImage
         );
         coverPageClone.characterImageOriginal = await attachFreshSignedUrl(
-        coverPageClone.characterImageOriginal
-      );
-      coverPageClone.qrCode = await attachFreshSignedUrl(coverPageClone.qrCode);
-      coverPageClone.characterPrompt = safeText(coverPageClone.characterPrompt);
-      coverPageClone.characterPromptMale = safeText(coverPageClone.characterPromptMale);
-      coverPageClone.characterPromptFemale = safeText(coverPageClone.characterPromptFemale);
-      coverPageClone.leftSide = {
-        title: safeText(coverPageClone.leftSide?.title),
-        content: safeText(coverPageClone.leftSide?.content),
-        bottomText: safeText(coverPageClone.leftSide?.bottomText),
-      };
-        coverPageClone.rightSide = {
-          mainTitle: safeText(coverPageClone.rightSide?.mainTitle),
-          subtitle: safeText(coverPageClone.rightSide?.subtitle),
-        };
-        resolvedCoverPage = coverPageClone;
+            coverPageClone.characterImageOriginal
+          );
+          coverPageClone.qrCode = await attachFreshSignedUrl(coverPageClone.qrCode);
+          coverPageClone.characterPrompt = safeText(coverPageClone.characterPrompt);
+          coverPageClone.characterPromptMale = safeText(coverPageClone.characterPromptMale);
+          coverPageClone.characterPromptFemale = safeText(coverPageClone.characterPromptFemale);
+          coverPageClone.leftSide = {
+            title: safeText(coverPageClone.leftSide?.title),
+            content: safeText(coverPageClone.leftSide?.content),
+            bottomText: safeText(coverPageClone.leftSide?.bottomText),
+          };
+          coverPageClone.rightSide = {
+            mainTitle: safeText(coverPageClone.rightSide?.mainTitle),
+            subtitle: safeText(coverPageClone.rightSide?.subtitle),
+          };
+          resolvedCoverPage = coverPageClone;
       }
 
       let resolvedDedicationPage = null;
@@ -431,14 +458,16 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
           dedicationClone.generatedImage
         );
         dedicationClone.generatedImageOriginal = await attachFreshSignedUrl(
-        dedicationClone.generatedImageOriginal
-      );
-      dedicationClone.title = safeText(dedicationClone.title);
-      dedicationClone.secondTitle = safeText(dedicationClone.secondTitle);
-      dedicationClone.characterPrompt = safeText(dedicationClone.characterPrompt);
-      dedicationClone.characterPromptMale = safeText(dedicationClone.characterPromptMale);
-      dedicationClone.characterPromptFemale = safeText(dedicationClone.characterPromptFemale);
-      resolvedDedicationPage = dedicationClone;
+            dedicationClone.generatedImageOriginal
+          );
+          dedicationClone.title = safeText(dedicationClone.title);
+          dedicationClone.secondTitle = safeText(dedicationClone.secondTitle);
+          dedicationClone.characterPrompt = safeText(dedicationClone.characterPrompt);
+          dedicationClone.characterPromptMale = safeText(dedicationClone.characterPromptMale);
+          dedicationClone.characterPromptFemale = safeText(
+            dedicationClone.characterPromptFemale
+          );
+          resolvedDedicationPage = dedicationClone;
       }
 
       const resolvedRenderedImage = await attachFreshSignedUrl(clonedPage.renderedImage);
@@ -730,7 +759,10 @@ exports.getAllBooks = async (req, res) => {
       to,
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      minimal,
     } = req.query;
+
+    const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
 
     const filter = {};
 
@@ -786,69 +818,97 @@ exports.getAllBooks = async (req, res) => {
         : 1;
     const skip = numericLimit > 0 ? (effectivePage - 1) * numericLimit : 0;
 
-    const query = Book.find(filter).sort(sort);
-    if (numericLimit > 0) {
-      query.skip(skip).limit(numericLimit);
-    }
-
-    const books = await query.exec();
-
-    const aggregation = await Book.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: null,
-          totalBooks: { $sum: 1 },
-          totalPages: { $sum: { $size: { $ifNull: ['$pages', []] } } },
-          active: {
-            $sum: {
-              $cond: [{ $eq: ['$status', 'active'] }, 1, 0],
-            },
-          },
-          inactive: {
-            $sum: {
-              $cond: [{ $eq: ['$status', 'inactive'] }, 1, 0],
-            },
-          },
-          male: {
-            $sum: {
-              $cond: [{ $eq: ['$gender', 'male'] }, 1, 0],
-            },
-          },
-          female: {
-            $sum: {
-              $cond: [{ $eq: ['$gender', 'female'] }, 1, 0],
-            },
-          },
-          both: {
-            $sum: {
-              $cond: [{ $eq: ['$gender', 'both'] }, 1, 0],
+    let books = [];
+    if (isMinimal) {
+      const pipeline = [{ $match: filter }, { $sort: sort }];
+      if (numericLimit > 0) {
+        pipeline.push({ $skip: skip }, { $limit: numericLimit });
+      }
+      pipeline.push({
+        $project: {
+          name: 1,
+          description: 1,
+          slug: 1,
+          status: 1,
+          gender: 1,
+          coverImage: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          pageCount: {
+            $size: {
+              $ifNull: ['$pages', []],
             },
           },
         },
-      },
-    ]);
+      });
+      books = await Book.aggregate(pipeline);
+    } else {
+      const query = Book.find(filter).sort(sort);
+      if (numericLimit > 0) {
+        query.skip(skip).limit(numericLimit);
+      }
+      books = await query.exec();
+    }
 
-    const statsSummary = aggregation.length
-      ? {
-          totalBooks: aggregation[0].totalBooks || 0,
-          totalPages: aggregation[0].totalPages || 0,
-          byStatus: {
-            active: aggregation[0].active || 0,
-            inactive: aggregation[0].inactive || 0,
+    let statsSummary = null;
+    if (!isMinimal) {
+      const aggregation = await Book.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalBooks: { $sum: 1 },
+            totalPages: { $sum: { $size: { $ifNull: ['$pages', []] } } },
+            active: {
+              $sum: {
+                $cond: [{ $eq: ['$status', 'active'] }, 1, 0],
+              },
+            },
+            inactive: {
+              $sum: {
+                $cond: [{ $eq: ['$status', 'inactive'] }, 1, 0],
+              },
+            },
+            male: {
+              $sum: {
+                $cond: [{ $eq: ['$gender', 'male'] }, 1, 0],
+              },
+            },
+            female: {
+              $sum: {
+                $cond: [{ $eq: ['$gender', 'female'] }, 1, 0],
+              },
+            },
+            both: {
+              $sum: {
+                $cond: [{ $eq: ['$gender', 'both'] }, 1, 0],
+              },
+            },
           },
-          byGender: {
-            male: aggregation[0].male || 0,
-            female: aggregation[0].female || 0,
-            both: aggregation[0].both || 0,
-          },
-        }
-      : {
-          totalBooks: 0,
-          totalPages: 0,
-          byStatus: { active: 0, inactive: 0 },
-          byGender: { male: 0, female: 0, both: 0 },
-        };
+        },
+      ]);
+
+      statsSummary = aggregation.length
+        ? {
+            totalBooks: aggregation[0].totalBooks || 0,
+            totalPages: aggregation[0].totalPages || 0,
+            byStatus: {
+              active: aggregation[0].active || 0,
+              inactive: aggregation[0].inactive || 0,
+            },
+            byGender: {
+              male: aggregation[0].male || 0,
+              female: aggregation[0].female || 0,
+              both: aggregation[0].both || 0,
+            },
+          }
+        : {
+            totalBooks: 0,
+            totalPages: 0,
+            byStatus: { active: 0, inactive: 0 },
+            byGender: { male: 0, female: 0, both: 0 },
+          };
+    }
 
     res.status(200).json({
       success: true,
@@ -1646,6 +1706,7 @@ exports.getBookStorybooks = async (req, res) => {
           const clonedAsset = cloneDocument(asset) || {};
           clonedAsset.pages = await attachFreshSignedUrlsToPages(clonedAsset.pages || [], {
             bookPages: book.pages || [],
+            preferSnapshotAssets: true,
           });
           return clonedAsset;
         })
@@ -1689,6 +1750,7 @@ exports.getStorybookAssetPages = async (req, res) => {
 
     const pages = await attachFreshSignedUrlsToPages(pdfAsset.pages || [], {
       bookPages: book.pages || [],
+      preferSnapshotAssets: true,
     });
 
     res.status(200).json({
@@ -2071,6 +2133,7 @@ exports.generateStorybook = async (req, res) => {
 
     const hydratedPages = await attachFreshSignedUrlsToPages(pdfAsset.pages || [], {
       bookPages: book.pages || [],
+      preferSnapshotAssets: true,
     });
 
     res.status(201).json({
@@ -2170,6 +2233,7 @@ exports.regenerateStorybookPage = async (req, res) => {
       ? (
           await attachFreshSignedUrlsToPages([result.pdfAssetPage], {
             bookPages: result.page ? [result.page] : book.pages || [],
+            preferSnapshotAssets: true,
           })
         )[0]
       : null;
@@ -2498,6 +2562,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
 
     const hydratedPages = await attachFreshSignedUrlsToPages(pagesSnapshot, {
       bookPages: book.pages || [],
+      preferSnapshotAssets: true,
     });
 
     res.status(200).json({
@@ -2651,6 +2716,7 @@ exports.confirmStorybookPdf = async (req, res) => {
 
     const hydratedPages = await attachFreshSignedUrlsToPages(savedSplitAsset.pages || [], {
       bookPages: book.pages || [],
+      preferSnapshotAssets: true,
     });
 
     const responseAsset = {
@@ -2700,6 +2766,7 @@ exports.selectStorybookPageCandidate = async (req, res) => {
     const hydratedPages = result.pdfAssetPage
       ? await attachFreshSignedUrlsToPages([result.pdfAssetPage], {
           bookPages: result.page ? [result.page] : [],
+          preferSnapshotAssets: true,
         })
       : [];
 

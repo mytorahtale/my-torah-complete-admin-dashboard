@@ -616,6 +616,27 @@ const createBlurredBackground = async (
   }
 };
 
+const isPlainObject = (value) => {
+  if (!value || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const cloneDeepPlain = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneDeepPlain(item));
+  }
+  if (value instanceof Date) {
+    return new Date(value.getTime());
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [key, cloneDeepPlain(val)])
+    );
+  }
+  return value;
+};
+
 const mapWithConcurrency = async (items, limit, mapper) => {
   if (!Array.isArray(items) || items.length === 0) {
     return [];
@@ -724,9 +745,13 @@ const wrapText = (text, maxWidth, fontSize) => {
 };
 
 async function generateStorybookPdf({ title, pages }) {
-  if (!Array.isArray(pages) || pages.length === 0) {
+  const inputPages = Array.isArray(pages) ? pages : [];
+  if (inputPages.length === 0) {
     throw new Error('At least one page is required to build the PDF');
   }
+
+  // Clone page data up front to avoid mutations from parallel jobs bleeding across runs
+  const pagesToRender = inputPages.map((page) => cloneDeepPlain(page));
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
@@ -766,7 +791,7 @@ async function generateStorybookPdf({ title, pages }) {
   }
 
   let prefetchedStoryAssets = new Map();
-  const storyPagesForPrefetch = pages
+  const storyPagesForPrefetch = pagesToRender
     .map((page, index) => ({ page, index }))
     .filter(({ page }) => {
       const pageType = (page && page.pageType) || 'story';
@@ -796,8 +821,8 @@ async function generateStorybookPdf({ title, pages }) {
 
   const renderedPageBuffers = [];
 
-  for (let index = 0; index < pages.length; index += 1) {
-    const pageData = pages[index] || {};
+  for (let index = 0; index < pagesToRender.length; index += 1) {
+    const pageData = pagesToRender[index] || {};
     const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     const pageType = pageData.pageType || 'story';
     const isCoverPage = pageType === 'cover';
@@ -1309,7 +1334,7 @@ async function generateStorybookPdf({ title, pages }) {
   const pdfBytes = await pdfDoc.save();
   return {
     buffer: pdfBytes,
-    pageCount: pages.length,
+    pageCount: pagesToRender.length,
     renderedPages: renderedPageBuffers,
   };
 }

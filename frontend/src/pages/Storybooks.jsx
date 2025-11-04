@@ -3,9 +3,7 @@ import toast from 'react-hot-toast';
 import {
   BookOpen,
   Download,
-  Image as ImageIcon,
   ImageOff,
-  Upload,
   Sparkles,
   PlugZap,
   Clock,
@@ -36,7 +34,6 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -187,12 +184,6 @@ const formatEta = (seconds) => {
 
   return `${minutes}m${remainingSeconds ? ` ${remainingSeconds}s` : ''}`;
 };
-
-const CHARACTER_POSITION_OPTIONS = [
-  { value: 'auto', label: 'Auto alternate' },
-  { value: 'left', label: 'Left' },
-  { value: 'right', label: 'Right' },
-];
 
 const NAME_PLACEHOLDER_DETECTION = /\{name\}/i;
 
@@ -1980,6 +1971,7 @@ function Storybooks() {
   const [applyingCandidateKey, setApplyingCandidateKey] = useState('');
   const [confirmingAssetId, setConfirmingAssetId] = useState('');
   const preloadRefs = useRef([]);
+  const hasLoadedInitialDataRef = useRef(false);
 
   const selectedReader = useMemo(
     () => users.find((user) => user._id === selectedUserId) || null,
@@ -2023,12 +2015,17 @@ function Storybooks() {
   }, [selectedBookId]);
 
   useEffect(() => {
+    if (hasLoadedInitialDataRef.current) {
+      return;
+    }
+    hasLoadedInitialDataRef.current = true;
+
     const fetchInitialData = async () => {
       try {
         setLoading(true);
         const [booksResponse, usersResponse] = await Promise.all([
-          bookAPI.getAll({ limit: 0 }),
-          userAPI.getAll({ limit: 0 }),
+          bookAPI.getAll({ limit: 0, minimal: true }),
+          userAPI.getAll({ limit: 0, minimal: true }),
         ]);
         if (booksResponse?.success === false) {
           throw new Error(booksResponse?.message || 'Failed to load books');
@@ -2259,7 +2256,7 @@ function Storybooks() {
   }, [selectedUserId, users]);
 
   useEffect(() => {
-    if (!selectedUserId) {
+    if (!selectedUserId || !selectedBookId) {
       setTrainings([]);
       setSelectedTrainingId('');
       return;
@@ -2269,25 +2266,24 @@ function Storybooks() {
 
     const fetchTrainings = async () => {
       try {
-        const response = await trainingAPI.getAll({
-          userId: selectedUserId,
-          status: 'succeeded',
-          limit: 0,
-        });
+        const response = await trainingAPI.getUserSuccessful(selectedUserId);
         if (cancelled) return;
         if (response?.success === false) {
           throw new Error(response?.message || 'Failed to load trainings');
         }
         const items = Array.isArray(response?.data)
-          ? response.data.filter((training) => training.status === 'succeeded')
+          ? response.data
           : [];
         setTrainings(items);
-        if (
-          items.length &&
-          !items.some((training) => training._id === selectedTrainingId)
-        ) {
-          setSelectedTrainingId(items[0]._id);
-        }
+        setSelectedTrainingId((previous) => {
+          if (!items.length) {
+            return '';
+          }
+          if (previous && items.some((training) => training._id === previous)) {
+            return previous;
+          }
+          return items[0]._id;
+        });
       } catch (error) {
         if (!cancelled) {
           toast.error(`Failed to load trainings: ${error.message}`);
@@ -2300,7 +2296,7 @@ function Storybooks() {
     return () => {
       cancelled = true;
     };
-  }, [selectedUserId, selectedTrainingId]);
+  }, [selectedUserId, selectedBookId]);
 
   useEffect(() => {
     if (!selectedBookId) {
@@ -2501,63 +2497,6 @@ function Storybooks() {
   const handlePageIndexChange = useCallback((newIndex) => {
     setActivePageIndex(newIndex);
   }, []);
-
-  const updatePage = (index, patch) => {
-    setPages((prev) =>
-      prev.map((page, pageIndex) => {
-        if (pageIndex !== index) return page;
-
-        if (patch.characterFile && page.characterPreview) {
-          URL.revokeObjectURL(page.characterPreview);
-        }
-
-        return {
-          ...page,
-          ...patch,
-        };
-      })
-    );
-  };
-
-  const handleCharacterFileChange = (index, event) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      updatePage(index, {
-        characterFile: null,
-        characterPreview: '',
-      });
-      return;
-    }
-
-    updatePage(index, {
-      characterFile: file,
-      characterPreview: URL.createObjectURL(file),
-      characterUrl: '',
-      useCharacter: true,
-    });
-  };
-
-  const handleCharacterUrlChange = (index, value) => {
-    updatePage(index, {
-      characterUrl: value,
-      characterFile: null,
-      characterPreview: '',
-      useCharacter: Boolean((value || '').trim().length),
-    });
-  };
-
-  const clearCharacterSelection = (index) => {
-    const current = pages[index];
-    if (current?.characterPreview) {
-      URL.revokeObjectURL(current.characterPreview);
-    }
-    updatePage(index, {
-      characterFile: null,
-      characterPreview: '',
-      characterUrl: selectedBook?.pages?.[index]?.characterImage?.url || '',
-      useCharacter: Boolean(selectedBook?.pages?.[index]?.characterImage?.url),
-    });
-  };
 
   const handleStartAutomation = async () => {
     if (!selectedBookId) {
@@ -4375,169 +4314,20 @@ function Storybooks() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Configure pages</CardTitle>
+                <CardTitle>Generate storybook</CardTitle>
                 <CardDescription>
-                  Update narration, supply character art, and preview each page before export.
+                  Build a PDF using the book&apos;s saved narration, backgrounds, and character overlays.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {pages.map((page, index) => (
-                  <div
-                    key={page.id || index}
-                    className="rounded-2xl border border-border/70 bg-card/60 p-4 shadow-subtle"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground/80">
-                          Page {page.order}
-                        </p>
-                        <p className="text-xs text-foreground/50">
-                          Character {page.useCharacter ? 'enabled' : 'disabled'}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <label className="inline-flex items-center gap-2 text-xs text-foreground/60">
-                          <input
-                            type="checkbox"
-                            checked={page.useCharacter}
-                            onChange={(event) =>
-                              updatePage(index, { useCharacter: event.target.checked })
-                            }
-                            className="h-4 w-4 rounded border-border bg-background text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                          />
-                          Show character art
-                        </label>
-                        <Select
-                          value={page.characterPosition}
-                          onValueChange={(value) => updatePage(index, { characterPosition: value })}
-                        >
-                          <SelectTrigger className="h-9 w-[160px] text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CHARACTER_POSITION_OPTIONS.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                      <div className="space-y-3">
-                        <Label className="text-xs uppercase tracking-wide text-foreground/60">
-                          Page text
-                        </Label>
-                        <Textarea
-                          value={page.text}
-                          onChange={(event) => updatePage(index, { text: event.target.value })}
-                          rows={6}
-                          className="resize-none"
-                        />
-                        {selectedReader?.name &&
-                        (containsNamePlaceholder(page.text) ||
-                          (page.text && page.text.includes('{gender}'))) ? (
-                          <p className="text-xs text-foreground/50">
-                            Preview with {selectedReader.name}:{' '}
-                            {replacePlaceholders(
-                              page.text,
-                              selectedReader.name,
-                              selectedReader.gender
-                            )}
-                          </p>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-foreground/60">
-                          <p className="font-medium uppercase tracking-wide text-foreground/55">
-                            Background (from book)
-                          </p>
-                          {page.backgroundImageUrl ? (
-                            <img
-                              src={page.backgroundImageUrl}
-                              alt={`Background for page ${page.order}`}
-                              className="mt-3 h-40 w-full rounded-lg object-cover"
-                            />
-                          ) : (
-                            <div className="mt-3 flex h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 bg-card/60 text-foreground/45">
-                              <ImageOff className="h-6 w-6" />
-                              <span className="text-xs">No background stored for this page.</span>
-                            </div>
-                          )}
-                          <p className="mt-3 text-[11px] text-foreground/50">
-                            Backgrounds are fixed per book. Update them in the Books section if needed.
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-                          <div className="mb-3 flex items-center justify-between text-xs text-foreground/60">
-                            <span className="font-medium uppercase tracking-wide">
-                              Character overlay
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {page.characterPreview || page.characterUrl ? (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 px-2 text-xs text-foreground/60"
-                                  onClick={() => clearCharacterSelection(index)}
-                                >
-                                  Clear
-                                </Button>
-                              ) : null}
-                              <label className="flex cursor-pointer items-center gap-2 text-xs text-accent">
-                                <Upload className="h-3.5 w-3.5" />
-                                Upload
-                                <Input
-                                  type="file"
-                                  accept="image/png,image/jpeg,image/webp"
-                                  className="hidden"
-                                  onChange={(event) => handleCharacterFileChange(index, event)}
-                                />
-                              </label>
-                            </div>
-                          </div>
-                          {page.prompt ? (
-                            <div className="mb-3 rounded-lg border border-border/50 bg-background/60 p-3 text-left">
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground/60">
-                                Saved prompt
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-foreground/65">
-                                {page.prompt}
-                              </p>
-                            </div>
-                          ) : null}
-                          {page.characterPreview || page.characterUrl ? (
-                            <img
-                              src={page.characterPreview || page.characterUrl}
-                              alt={`Character overlay for page ${page.order}`}
-                              className="h-32 w-full rounded-lg object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 bg-card/60 text-foreground/45">
-                              <ImageIcon className="h-6 w-6" />
-                              <span className="text-xs">No character image selected</span>
-                            </div>
-                          )}
-                          <div className="mt-3 space-y-2">
-                            <Label className="text-xs uppercase tracking-wide text-foreground/55">
-                              Or use image URL
-                            </Label>
-                            <Input
-                              placeholder="https://..."
-                              value={page.characterUrl}
-                              onChange={(event) => handleCharacterUrlChange(index, event.target.value)}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <CardContent className="space-y-2 text-sm text-foreground/65">
+                <p>
+                  Storybook pulls {totalPages} curated pages prepared in the book setup.
+                </p>
+                <p>
+                  {selectedReader
+                    ? `Personalises placeholders with ${selectedReader.name}'s details.`
+                    : 'Select a reader to replace {name} placeholders automatically.'}
+                </p>
               </CardContent>
               <CardFooter className="flex items-center justify-end border-t border-border/60 bg-card/60 py-4">
                 <Button

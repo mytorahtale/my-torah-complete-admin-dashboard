@@ -188,6 +188,14 @@ function Books() {
     byStatus: { active: 0, inactive: 0 },
     byGender: { male: 0, female: 0, both: 0 },
   });
+  const [loadingBookDetailId, setLoadingBookDetailId] = useState(null);
+  const formCardRef = useRef(null);
+  const latestLoadRequestRef = useRef(null);
+  useEffect(() => {
+    if (showForm && formCardRef.current) {
+      formCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [showForm, editingBook?._id]);
   const hasInitialisedRef = useRef(false);
 
   useEffect(() => {
@@ -224,7 +232,7 @@ function Books() {
           params.gender = genderFilter;
         }
 
-        const response = await bookAPI.getAll(params);
+        const response = await bookAPI.getAll({ ...params, minimal: true });
         const fetchedBooks = Array.isArray(response?.data)
           ? response.data
           : Array.isArray(response)
@@ -259,7 +267,12 @@ function Books() {
         });
 
         const fallbackPageCount = fetchedBooks.reduce(
-          (sum, book) => sum + (book.pages?.length || 0),
+          (sum, book) => {
+            if (typeof book.pageCount === 'number') {
+              return sum + book.pageCount;
+            }
+            return sum + (Array.isArray(book.pages) ? book.pages.length : 0);
+          },
           0
         );
 
@@ -314,7 +327,12 @@ function Books() {
     if (typeof stats.totalPages === 'number' && stats.totalPages >= 0) {
       return stats.totalPages;
     }
-    return books.reduce((sum, book) => sum + (book.pages?.length || 0), 0);
+    return books.reduce((sum, book) => {
+      if (typeof book.pageCount === 'number') {
+        return sum + book.pageCount;
+      }
+      return sum + (Array.isArray(book.pages) ? book.pages.length : 0);
+    }, 0);
   }, [stats.totalPages, books]);
 
   const effectivePageSize =
@@ -382,6 +400,7 @@ function Books() {
     setShowForm(false);
     setIsSaving(false);
     setActiveTab('story-pages');
+    setLoadingBookDetailId(null);
   }, [formState.cover, formState.pages, formState.coverPage, formState.dedicationPage]);
 
   const openCreateForm = () => {
@@ -389,7 +408,17 @@ function Books() {
     setShowForm(true);
   };
 
-  const openEditForm = (book) => {
+  const openEditForm = async (bookOrId) => {
+    const bookId = typeof bookOrId === 'string' ? bookOrId : bookOrId?._id;
+    if (!bookId) {
+      toast.error('Unable to identify book to edit.');
+      return;
+    }
+
+    if (latestLoadRequestRef.current === bookId) {
+      return;
+    }
+
     revokeIfNeeded(formState.cover.preview, formState.cover.previewIsObject);
     formState.pages.forEach((page) => {
       revokeIfNeeded(page.preview, page.previewIsObject);
@@ -397,6 +426,38 @@ function Books() {
         revokeIfNeeded(page.qr.preview, page.qr.previewIsObject);
       }
     });
+
+    let book = typeof bookOrId === 'object' ? bookOrId : null;
+    const requiresFetch =
+      !book ||
+      !Array.isArray(book.pages) ||
+      !book.coverPage ||
+      !book.dedicationPage;
+
+    const currentRequestId = bookId;
+
+    if (requiresFetch) {
+      try {
+        latestLoadRequestRef.current = bookId;
+        setLoadingBookDetailId(bookId);
+        const response = await bookAPI.getById(bookId);
+        if (response?.success === false || !response?.data) {
+          throw new Error(response?.message || 'Failed to load book details');
+        }
+        book = response.data;
+      } catch (error) {
+        toast.error(error.message || 'Failed to load book details');
+        setLoadingBookDetailId(null);
+        if (latestLoadRequestRef.current === bookId) {
+          latestLoadRequestRef.current = null;
+        }
+        return;
+      }
+
+      if (latestLoadRequestRef.current !== currentRequestId) {
+        return;
+      }
+    }
 
     const sortedPages = [...(book.pages || [])].sort(
       (a, b) => (a.order || 0) - (b.order || 0)
@@ -426,11 +487,18 @@ function Books() {
                 id: page._id || null,
                 pageType,
                 text: page.text || '',
-                prompt: page.characterPrompt || page.prompt || page.characterPromptMale || page.characterPromptFemale || '',
+                prompt:
+                  page.characterPrompt ||
+                  page.prompt ||
+                  page.characterPromptMale ||
+                  page.characterPromptFemale ||
+                  '',
                 promptMale: page.characterPromptMale || page.characterPrompt || '',
-                promptFemale: page.characterPromptFemale || page.characterPrompt || '',
+                promptFemale:
+                  page.characterPromptFemale || page.characterPrompt || '',
                 file: null,
-                preview: page.backgroundImage?.url || page.characterImage?.url || null,
+                preview:
+                  page.backgroundImage?.url || page.characterImage?.url || null,
                 previewIsObject: false,
                 existingImage: page.backgroundImage || page.characterImage || null,
                 removeImage: false,
@@ -480,9 +548,17 @@ function Books() {
           mainTitle: book.coverPage?.rightSide?.mainTitle || '',
           subtitle: book.coverPage?.rightSide?.subtitle || '',
         },
-        characterPrompt: book.coverPage?.characterPrompt || book.coverPage?.characterPromptMale || book.coverPage?.characterPromptFemale || '',
-        characterPromptMale: book.coverPage?.characterPromptMale || book.coverPage?.characterPrompt || '',
-        characterPromptFemale: book.coverPage?.characterPromptFemale || book.coverPage?.characterPrompt || '',
+        characterPrompt:
+          book.coverPage?.characterPrompt ||
+          book.coverPage?.characterPromptMale ||
+          book.coverPage?.characterPromptFemale ||
+          '',
+        characterPromptMale:
+          book.coverPage?.characterPromptMale || book.coverPage?.characterPrompt || '',
+        characterPromptFemale:
+          book.coverPage?.characterPromptFemale ||
+          book.coverPage?.characterPrompt ||
+          '',
       },
       dedicationPage: {
         backgroundImage: {
@@ -497,15 +573,30 @@ function Books() {
         },
         title: book.dedicationPage?.title || '',
         secondTitle: book.dedicationPage?.secondTitle || '',
-        characterPrompt: book.dedicationPage?.characterPrompt || book.dedicationPage?.characterPromptMale || book.dedicationPage?.characterPromptFemale || '',
-        characterPromptMale: book.dedicationPage?.characterPromptMale || book.dedicationPage?.characterPrompt || '',
-        characterPromptFemale: book.dedicationPage?.characterPromptFemale || book.dedicationPage?.characterPrompt || '',
+        characterPrompt:
+          book.dedicationPage?.characterPrompt ||
+          book.dedicationPage?.characterPromptMale ||
+          book.dedicationPage?.characterPromptFemale ||
+          '',
+        characterPromptMale:
+          book.dedicationPage?.characterPromptMale ||
+          book.dedicationPage?.characterPrompt ||
+          '',
+        characterPromptFemale:
+          book.dedicationPage?.characterPromptFemale ||
+          book.dedicationPage?.characterPrompt ||
+          '',
       },
     });
 
     setEditingBook(book);
     setFormMode('edit');
     setShowForm(true);
+    setActiveTab('story-pages');
+    setLoadingBookDetailId((prev) => (prev === currentRequestId ? null : prev));
+    if (latestLoadRequestRef.current === currentRequestId) {
+      latestLoadRequestRef.current = null;
+    }
   };
 
   const handleCoverChange = (event) => {
@@ -1399,6 +1490,13 @@ const handleRemovePageImage = (index) => {
         </div>
       </div>
 
+      {loadingBookDetailId ? (
+        <div className="flex items-center gap-2 text-sm text-foreground/60">
+          <Loader2 className="h-4 w-4 animate-spin text-accent" />
+          Loading book details…
+        </div>
+      ) : null}
+
       <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto]">
         <div className="space-y-2">
           <Label htmlFor="book-search">Search books</Label>
@@ -1474,7 +1572,7 @@ const handleRemovePageImage = (index) => {
       )}
 
       {showForm && (
-        <Card>
+        <Card ref={formCardRef}>
           <CardHeader>
             <CardTitle>{formMode === 'edit' ? 'Edit book' : 'Create new book'}</CardTitle>
             <CardDescription>
@@ -2257,8 +2355,23 @@ const handleRemovePageImage = (index) => {
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {books.map((book) => (
-          <Card key={book._id} className="flex flex-col justify-between">
+        {books.map((book) => {
+          const pageCount =
+            typeof book.pageCount === 'number'
+              ? book.pageCount
+              : Array.isArray(book.pages)
+              ? book.pages.length
+              : 0;
+        const hasDetailedPages = Array.isArray(book.pages) && book.pages.length > 0;
+        const highlightedPageCount = hasDetailedPages
+          ? book.pages.filter(
+              (page) => page.backgroundImage?.url || page.characterImage?.url
+            ).length
+          : 0;
+          const isLoadingDetails = loadingBookDetailId === book._id;
+
+          return (
+            <Card key={book._id} className="flex flex-col justify-between">
             <CardHeader className="space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1">
@@ -2273,7 +2386,7 @@ const handleRemovePageImage = (index) => {
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/50">
                 <BookOpen className="h-3.5 w-3.5" />
-                <span>{book.pages?.length || 0} pages</span>
+                <span>{pageCount} pages</span>
                 <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-foreground/55">
                   {book.gender}
                 </span>
@@ -2308,16 +2421,14 @@ const handleRemovePageImage = (index) => {
                     : 'Hidden from generation workflows'}
                 </span>
               </div>
-              {book.pages?.length ? (
+              {hasDetailedPages ? (
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.2em] text-foreground/45">
                     Highlights
                   </p>
                   <p className="text-xs text-foreground/60">
                     Includes{' '}
-                    {book.pages.filter(
-                      (page) => page.backgroundImage?.url || page.characterImage?.url
-                    ).length}{' '}
+                    {highlightedPageCount}{' '}
                     pages with background art.
                   </p>
                 </div>
@@ -2331,9 +2442,19 @@ const handleRemovePageImage = (index) => {
                 size="sm"
                 className="gap-1"
                 onClick={() => openEditForm(book)}
+                disabled={isLoadingDetails}
               >
-                <Pencil className="h-4 w-4" />
-                Edit
+                {isLoadingDetails ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading…
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-4 w-4" />
+                    Edit
+                  </>
+                )}
               </Button>
               <Button
                 type="button"
@@ -2366,7 +2487,8 @@ const handleRemovePageImage = (index) => {
               </Button>
             </CardFooter>
           </Card>
-        ))}
+        );
+        })}
       </div>
 
       <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 p-4 sm:flex-row">

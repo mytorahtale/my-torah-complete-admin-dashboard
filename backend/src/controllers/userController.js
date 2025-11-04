@@ -33,7 +33,10 @@ exports.getAllUsers = async (req, res) => {
       gender,
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      minimal,
     } = req.query;
+
+    const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
 
     const numericLimit = toPositiveInteger(limit, 10);
     const rawPage = toPositiveInteger(page, 1) || 1;
@@ -63,25 +66,30 @@ exports.getAllUsers = async (req, res) => {
     const sort = { [resolvedSortField]: resolvedSortOrder, _id: resolvedSortOrder };
 
     const countPromise = User.countDocuments(filter);
-    const imageStatsPromise = User.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: null,
-          totalImages: {
-            $sum: {
-              $size: {
-                $ifNull: ['$imageAssets', []],
+    const statsPromise = isMinimal
+      ? Promise.resolve([])
+      : User.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: null,
+              totalImages: {
+                $sum: {
+                  $size: {
+                    $ifNull: ['$imageAssets', []],
+                  },
+                },
               },
             },
           },
-        },
-      },
-    ]);
+        ]);
 
-    const [totalUsers, imageStats] = await Promise.all([countPromise, imageStatsPromise]);
+    const [totalUsers, imageStats] = await Promise.all([countPromise, statsPromise]);
 
-    const totalImages = Array.isArray(imageStats) && imageStats.length > 0 ? imageStats[0].totalImages : 0;
+    const totalImages =
+      !isMinimal && Array.isArray(imageStats) && imageStats.length > 0
+        ? imageStats[0].totalImages
+        : 0;
 
     const totalPages =
       numericLimit > 0 && totalUsers > 0 ? Math.ceil(totalUsers / numericLimit) : totalUsers > 0 ? 1 : 0;
@@ -91,7 +99,21 @@ exports.getAllUsers = async (req, res) => {
         : 1;
     const skip = numericLimit > 0 ? (effectivePage - 1) * numericLimit : 0;
 
+    const projection = isMinimal
+      ? {
+          name: 1,
+          email: 1,
+          gender: 1,
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        }
+      : null;
+
     const query = User.find(filter).sort(sort);
+    if (projection) {
+      query.select(projection);
+    }
     if (numericLimit > 0) {
       query.skip(skip).limit(numericLimit);
     }
@@ -117,10 +139,12 @@ exports.getAllUsers = async (req, res) => {
         sortBy: resolvedSortField,
         sortOrder: resolvedSortOrder === 1 ? 'asc' : 'desc',
       },
-      stats: {
-        totalUsers,
-        totalImages,
-      },
+      stats: isMinimal
+        ? null
+        : {
+            totalUsers,
+            totalImages,
+          },
     });
   } catch (error) {
     console.error('Error fetching users:', error);

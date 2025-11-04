@@ -1,6 +1,7 @@
 const { S3Client, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { randomUUID } = require('crypto');
 const path = require('path');
 
 const requiredEnv = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
@@ -24,6 +25,15 @@ const s3Client = new S3Client({
 const BUCKET = process.env.AWS_S3_BUCKET || 'book-story-ai-generate';
 
 const buildKey = (...segments) => segments.filter(Boolean).join('/');
+
+const buildUniqueSuffix = () => {
+  const timePart = Date.now().toString(36);
+  const randomPart =
+    typeof randomUUID === 'function'
+      ? randomUUID().replace(/-/g, '').slice(0, 12)
+      : Math.random().toString(36).slice(2, 10);
+  return `${timePart}-${randomPart}`;
+};
 
 const getPublicUrl = (key) => {
   if (!key) return null;
@@ -99,13 +109,17 @@ async function downloadFromS3(key) {
 }
 
 const generateImageKey = (userId, originalName) => {
-  const timestamp = Date.now();
-  const safeName = originalName ? path.basename(originalName).replace(/\s+/g, '-').toLowerCase() : `image-${timestamp}`;
-  return buildKey('users', String(userId), 'images', `${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `image-${unique}`);
+  return buildKey('users', String(userId), 'images', `${unique}-${safeName}`);
 };
 
 const generateTrainingImageKey = (modelName, originalName, index) => {
-  const safeName = originalName ? path.basename(originalName).replace(/\s+/g, '-').toLowerCase() : `image-${index + 1}.jpg`;
+  const unique = buildUniqueSuffix();
+  const baseName = originalName
+    ? path.basename(originalName).replace(/\s+/g, '-').toLowerCase()
+    : `image-${index + 1}.jpg`;
+  const safeName = sanitizeFileName(baseName, `image-${index + 1}-${unique}.jpg`);
   return buildKey('trainings', modelName, 'images', safeName);
 };
 
@@ -122,39 +136,39 @@ const sanitizeFileName = (value, fallback) => {
 };
 
 const generateBookCoverKey = (bookSlug, originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `cover-${timestamp}.jpg`);
-  return buildKey('books', bookSlug, 'cover', `${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `cover-${unique}.jpg`);
+  return buildKey('books', bookSlug, 'cover', `${unique}-${safeName}`);
 };
 
 const generateBookPageImageKey = (bookSlug, order, originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `page-${order}-${timestamp}.jpg`);
-  return buildKey('books', bookSlug, 'pages', `${order}-${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `page-${order}-${unique}.jpg`);
+  return buildKey('books', bookSlug, 'pages', `${order}-${unique}-${safeName}`);
 };
 
 const generateBookCharacterOverlayKey = (bookSlug, order, originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `character-${order}-${timestamp}.png`);
-  return buildKey('books', bookSlug, 'story', 'characters', `${order}-${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `character-${order}-${unique}.png`);
+  return buildKey('books', bookSlug, 'story', 'characters', `${order}-${unique}-${safeName}`);
 };
 
 const generateBookQrCodeKey = (bookSlug, order, originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `qr-${order}-${timestamp}.png`);
-  return buildKey('books', bookSlug, 'pages', 'qr', `${order}-${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `qr-${order}-${unique}.png`);
+  return buildKey('books', bookSlug, 'pages', 'qr', `${order}-${unique}-${safeName}`);
 };
 
 const generatePromptImageKey = (originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `prompt-${timestamp}.jpg`);
-  return buildKey('prompts', `${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `prompt-${unique}.jpg`);
+  return buildKey('prompts', `${unique}-${safeName}`);
 };
 
 const generateEvaluationImageKey = (originalName) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(originalName, `evaluation-${timestamp}.jpg`);
-  return buildKey('evaluations', `${timestamp}-${safeName}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(originalName, `evaluation-${unique}.jpg`);
+  return buildKey('evaluations', `${unique}-${safeName}`);
 };
 
 const ensurePdfExtension = (value) => {
@@ -163,9 +177,9 @@ const ensurePdfExtension = (value) => {
 };
 
 const generateBookPdfKey = (bookSlug, title) => {
-  const timestamp = Date.now();
-  const safeName = sanitizeFileName(title, `storybook-${timestamp}.pdf`);
-  return buildKey('books', bookSlug, 'pdfs', `${timestamp}-${ensurePdfExtension(safeName)}`);
+  const unique = buildUniqueSuffix();
+  const safeName = sanitizeFileName(title, `storybook-${unique}.pdf`);
+  return buildKey('books', bookSlug, 'pdfs', `${unique}-${ensurePdfExtension(safeName)}`);
 };
 
 module.exports = {
