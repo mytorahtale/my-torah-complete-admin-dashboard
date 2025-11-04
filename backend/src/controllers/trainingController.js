@@ -603,6 +603,8 @@ exports.startTraining = async (req, res) => {
       console.log('⚠️  No REPLICATE_USERNAME set - training will not be saved to account');
     }
 
+    const pendingReplicateId = `pending:${uniqueModelName}:${Date.now()}`;
+
     const newTraining = await Training.create({
       userId,
       modelName: uniqueModelName,
@@ -611,6 +613,7 @@ exports.startTraining = async (req, res) => {
       status: 'queued',
       progress: 0,
       logsUrl: null,
+      replicateTrainingId: pendingReplicateId,
       trainingConfig: trainingConfigRecord,
       attempts: 0,
       events: [
