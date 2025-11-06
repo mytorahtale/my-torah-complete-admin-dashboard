@@ -844,11 +844,10 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
   }
 
   const resolvedPrompt = resolvePromptByGender(bookPage, readerGender);
-  const jobCharacterPosition = normalizeCharacterPosition(jobPage?.characterPosition, null);
-  const resolvedCharacterPosition =
-    jobCharacterPosition !== null
-      ? jobCharacterPosition
-      : normalizeCharacterPosition(bookPage.characterPosition, 'auto');
+  const resolvedCharacterPosition = normalizeCharacterPosition(
+    bookPage.characterPosition,
+    'auto'
+  );
 
   return {
     order: bookPage.order,

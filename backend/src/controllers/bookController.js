@@ -2399,11 +2399,10 @@ exports.regenerateStorybookPdf = async (req, res) => {
         ? await attachFreshSignedUrl(snapshot.characterOriginal)
         : null;
 
-      const snapshotPosition = normalizeCharacterPosition(snapshot.characterPosition, null);
-      const resolvedCharacterPosition =
-        snapshotPosition !== null
-          ? snapshotPosition
-          : normalizeCharacterPosition(bookPage.characterPosition, 'auto');
+      const resolvedCharacterPosition = normalizeCharacterPosition(
+        bookPage.characterPosition,
+        'auto'
+      );
       const storyPage = {
         order: bookPage.order,
         text: snapshot.text || bookPage.text || '',
