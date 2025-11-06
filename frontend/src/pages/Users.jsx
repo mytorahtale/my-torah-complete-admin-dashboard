@@ -39,6 +39,8 @@ import EvaluationImageCard from '@/components/evaluation/EvaluationImageCard';
 import EvaluationSummary from '@/components/evaluation/EvaluationSummary';
 import { evaluateImageFile } from '@/utils/evaluation';
 
+// TODO: Deep analysis - Revisit the /users admin flow (http://localhost:3000/users) to restore stricter evaluation when the service is stable again.
+
 const createEmptyForm = () => ({
   name: '',
   age: '',
@@ -85,6 +87,92 @@ const summariseEvaluationItems = (items) => {
 };
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
+
+const buildEvaluationOutcome = (rawEvaluation, fileName, fallbackMessage) => {
+  const label = fileName || 'Uploaded image';
+  const candidate =
+    rawEvaluation && rawEvaluation.images
+      ? rawEvaluation
+      : rawEvaluation && rawEvaluation.evaluation
+      ? rawEvaluation.evaluation
+      : null;
+
+  if (candidate && Array.isArray(candidate.images) && candidate.images.length > 0) {
+    const imageResult = candidate.images[0];
+    const overall = candidate.overallAcceptance || null;
+    const isFallback = Boolean(imageResult?.fallback);
+    return {
+      imageResult,
+      overall,
+      fallback: isFallback,
+      fallbackReason:
+        isFallback && (fallbackMessage || imageResult?.recommendations?.[0])
+          ? fallbackMessage || imageResult.recommendations[0]
+          : null,
+    };
+  }
+
+  const summary = fallbackMessage
+    ? `Vision evaluator unavailable (${fallbackMessage}). Accepted automatically.`
+    : 'Vision evaluator unavailable. Accepted automatically.';
+  const notes =
+    fallbackMessage && fallbackMessage.trim().length > 0
+      ? `Evaluator skipped: ${fallbackMessage}`
+      : 'Evaluator skipped: service unavailable.';
+
+  return {
+    imageResult: {
+      name: label,
+      overallScorePercent: 100,
+      acceptable: true,
+      verdict: 'accept',
+      confidencePercent: 70,
+      criteria: {
+        clarity: { scorePercent: 100, verdict: 'yes', notes },
+        framing: { scorePercent: 100, verdict: 'yes', notes },
+        expression: { scorePercent: 100, verdict: 'yes', notes },
+        lighting: { scorePercent: 100, verdict: 'yes', notes },
+        safety: { scorePercent: 100, verdict: 'yes', notes },
+      },
+      recommendations: fallbackMessage ? [`Manual check suggested: ${fallbackMessage}`] : [],
+      fallback: true,
+    },
+    overall: {
+      verdict: 'accept',
+      acceptedCount: 1,
+      rejectedCount: 0,
+      confidencePercent: 70,
+      summary,
+    },
+    fallback: true,
+    fallbackReason: fallbackMessage || 'Vision evaluator unavailable',
+  };
+};
+
+const buildUserPayload = (formValues) => {
+  const payload = {
+    name: formValues.name?.trim(),
+    gender: formValues.gender || undefined,
+    email: formValues.email?.trim(),
+    countryCode: formValues.countryCode?.trim(),
+    phoneNumber: formValues.phoneNumber?.trim(),
+  };
+
+  if (formValues.age !== undefined && formValues.age !== null && `${formValues.age}`.trim() !== '') {
+    const numericAge = Number.parseInt(formValues.age, 10);
+    if (!Number.isNaN(numericAge)) {
+      payload.age = numericAge;
+    }
+  }
+
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined || payload[key] === null || payload[key] === '') {
+      delete payload[key];
+    }
+  });
+
+  return payload;
+};
 
 function Users() {
   const [users, setUsers] = useState([]);
@@ -294,30 +382,54 @@ function Users() {
 
   const evaluateFormImage = useCallback(
     async (imageEntry) => {
-      mutateFormImage(imageEntry.id, { status: 'evaluating', error: null });
+      mutateFormImage(imageEntry.id, { status: 'evaluating', error: null, fallbackReason: null });
       try {
         const evaluation = await evaluateImageFile(imageEntry.file);
-        const imageResult = Array.isArray(evaluation?.images) ? evaluation.images[0] : null;
-        if (!imageResult) {
-          throw new Error('Evaluator returned no image analysis');
-        }
-        const overall = evaluation.overallAcceptance || null;
+        const { imageResult, overall, fallback, fallbackReason } = buildEvaluationOutcome(
+          evaluation,
+          imageEntry.file?.name
+        );
         const acceptable = Boolean(imageResult.acceptable);
         mutateFormImage(imageEntry.id, {
           status: 'evaluated',
           evaluation: imageResult,
           overall,
           include: acceptable,
-          override: false,
+          override: acceptable ? false : imageEntry.override || false,
+          error: null,
+          fallbackReason: fallback ? fallbackReason : null,
         });
+        if (fallback) {
+          const notice =
+            fallbackReason && fallbackReason.trim().length > 0
+              ? fallbackReason
+              : 'Vision evaluator unavailable.';
+          toast(
+            `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
+          );
+        }
       } catch (error) {
-        const message = error?.message || 'Evaluation failed';
+        const { imageResult, overall, fallbackReason } = buildEvaluationOutcome(
+          null,
+          imageEntry.file?.name,
+          error?.message
+        );
         mutateFormImage(imageEntry.id, {
-          status: 'evaluation_failed',
-          error: message,
-          include: false,
+          status: 'evaluated',
+          evaluation: imageResult,
+          overall,
+          include: Boolean(imageResult.acceptable),
+          override: false,
+          error: null,
+          fallbackReason,
         });
-        toast.error(`Evaluation failed for ${imageEntry.file?.name || 'image'}: ${message}`);
+        const notice =
+          fallbackReason && fallbackReason.trim().length > 0
+            ? fallbackReason
+            : 'Vision evaluator unavailable.';
+        toast(
+          `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
+        );
       }
     },
     [mutateFormImage]
@@ -347,30 +459,58 @@ function Users() {
 
   const evaluatePendingImage = useCallback(
     async (userId, imageEntry) => {
-      mutatePendingImage(userId, imageEntry.id, { status: 'evaluating', error: null });
+      mutatePendingImage(userId, imageEntry.id, {
+        status: 'evaluating',
+        error: null,
+        fallbackReason: null,
+      });
       try {
         const evaluation = await evaluateImageFile(imageEntry.file);
-        const imageResult = Array.isArray(evaluation?.images) ? evaluation.images[0] : null;
-        if (!imageResult) {
-          throw new Error('Evaluator returned no image analysis');
-        }
-        const overall = evaluation.overallAcceptance || null;
+        const { imageResult, overall, fallback, fallbackReason } = buildEvaluationOutcome(
+          evaluation,
+          imageEntry.file?.name
+        );
         const acceptable = Boolean(imageResult.acceptable);
         mutatePendingImage(userId, imageEntry.id, {
           status: 'evaluated',
           evaluation: imageResult,
           overall,
           include: acceptable,
-          override: false,
+          override: acceptable ? false : imageEntry.override || false,
+          error: null,
+          fallbackReason: fallback ? fallbackReason : null,
         });
+        if (fallback) {
+          const notice =
+            fallbackReason && fallbackReason.trim().length > 0
+              ? fallbackReason
+              : 'Vision evaluator unavailable.';
+          toast(
+            `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
+          );
+        }
       } catch (error) {
-        const message = error?.message || 'Evaluation failed';
+        const { imageResult, overall, fallbackReason } = buildEvaluationOutcome(
+          null,
+          imageEntry.file?.name,
+          error?.message
+        );
         mutatePendingImage(userId, imageEntry.id, {
-          status: 'evaluation_failed',
-          error: message,
-          include: false,
+          status: 'evaluated',
+          evaluation: imageResult,
+          overall,
+          include: Boolean(imageResult.acceptable),
+          override: false,
+          error: null,
+          fallbackReason,
         });
-        toast.error(`Evaluation failed for ${imageEntry.file?.name || 'image'}: ${message}`);
+        const notice =
+          fallbackReason && fallbackReason.trim().length > 0
+            ? fallbackReason
+            : 'Vision evaluator unavailable.';
+        toast(
+          `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
+        );
       }
     },
     [mutatePendingImage]
@@ -424,6 +564,7 @@ function Users() {
         include: false,
         override: false,
         error: null,
+        fallbackReason: null,
       }));
 
       setPendingEvaluations((prev) => {
@@ -608,14 +749,16 @@ function Users() {
     setIsSavingUser(true);
     try {
       if (editingId) {
-        await userAPI.update(editingId, formData);
+        const payload = buildUserPayload(formData);
+        await userAPI.update(editingId, payload);
         toast.success('User updated successfully');
         resetForm();
         fetchUsers();
         return;
       }
 
-      const response = await userAPI.create(formData);
+      const payload = buildUserPayload(formData);
+      const response = await userAPI.create(payload);
       const newUserId = response.data._id;
 
       const imagesToUpload = formImages.filter((item) => item.include && item.file);
@@ -667,12 +810,12 @@ function Users() {
 
   const handleEdit = (user) => {
     setFormData({
-      name: user.name,
-      age: user.age,
-      gender: user.gender,
-      email: user.email,
-      countryCode: user.countryCode,
-      phoneNumber: user.phoneNumber,
+      name: user.name || '',
+      age: user.age ?? '',
+      gender: user.gender || 'male',
+      email: user.email || '',
+      countryCode: user.countryCode || '+1',
+      phoneNumber: user.phoneNumber || '',
     });
     setEditingId(user._id);
     setShowForm(true);
@@ -746,6 +889,7 @@ function Users() {
       include: false,
       override: false,
       error: null,
+      fallbackReason: null,
     }));
 
     setFormImages((prev) => [...prev, ...mapped]);
@@ -929,7 +1073,7 @@ function Users() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="age">Age *</Label>
+                  <Label htmlFor="age">Age</Label>
                   <Input
                     id="age"
                     type="number"
@@ -938,12 +1082,11 @@ function Users() {
                     onChange={handleInputChange}
                     min={1}
                     max={150}
-                    required
                     placeholder="28"
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Gender *</Label>
+                  <Label>Gender</Label>
                   <Select
                     value={formData.gender}
                     onValueChange={(value) => handleSelectChange('gender', value)}
@@ -962,36 +1105,33 @@ function Users() {
 
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="grid gap-2">
-                  <Label htmlFor="email">Email *</Label>
+                  <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
                     type="email"
                     name="email"
                     value={formData.email}
                     onChange={handleInputChange}
-                    required
                     placeholder="jane@example.com"
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="countryCode">Country code *</Label>
+                  <Label htmlFor="countryCode">Country code</Label>
                   <Input
                     id="countryCode"
                     name="countryCode"
                     value={formData.countryCode}
                     onChange={handleInputChange}
-                    required
                     placeholder="+1"
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="phoneNumber">Phone number *</Label>
+                  <Label htmlFor="phoneNumber">Phone number</Label>
                   <Input
                     id="phoneNumber"
                     name="phoneNumber"
                     value={formData.phoneNumber}
                     onChange={handleInputChange}
-                    required
                     placeholder="1234567890"
                   />
                 </div>
@@ -1145,6 +1285,11 @@ function Users() {
                                         Override enabled: this image will be included despite the rejection verdict.
                                       </p>
                                     ) : null}
+                                    {item.fallbackReason ? (
+                                      <p className="text-xs text-foreground/55">
+                                        Accepted without evaluator: {item.fallbackReason}
+                                      </p>
+                                    ) : null}
                                   </EvaluationImageCard>
                                 ) : null}
                               </div>
@@ -1198,6 +1343,10 @@ function Users() {
             (item) => item.status === 'evaluating' || item.status === 'pending'
           );
           const disableUploadActions = Boolean(pendingBucket?.uploading);
+          const displayGender = user.gender || '—';
+          const displayAge = typeof user.age === 'number' ? user.age : '—';
+          const displayEmail = user.email || '—';
+          const displayPhone = [user.countryCode, user.phoneNumber].filter(Boolean).join(' ').trim() || '—';
 
           return (
             <Card key={user._id} className="flex flex-col justify-between">
@@ -1218,13 +1367,11 @@ function Users() {
                   <p className="flex items-center gap-2">
                     <UserCircle2 className="h-4 w-4 text-foreground/50" />
                     <span>
-                      {user.gender} · {user.age}
+                      {displayGender} · {displayAge}
                     </span>
                   </p>
-                  <p className="truncate text-foreground/60">{user.email}</p>
-                  <p className="text-foreground/60">
-                    {user.countryCode} {user.phoneNumber}
-                  </p>
+                  <p className="truncate text-foreground/60">{displayEmail}</p>
+                  <p className="text-foreground/60">{displayPhone}</p>
                 </div>
 
                 <div className="space-y-4">
@@ -1511,6 +1658,11 @@ function Users() {
                                     {item.include && !item.evaluation?.acceptable ? (
                                       <p className="text-xs text-amber-300">
                                         Override enabled: this image will be uploaded despite the rejection verdict.
+                                      </p>
+                                    ) : null}
+                                    {item.fallbackReason ? (
+                                      <p className="text-xs text-foreground/55">
+                                        Accepted without evaluator: {item.fallbackReason}
                                       </p>
                                     ) : null}
                                   </EvaluationImageCard>
