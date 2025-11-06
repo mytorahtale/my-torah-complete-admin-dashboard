@@ -32,6 +32,10 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '25mb' }));
 // Static font assets for canvas rendering
 app.use('/fonts', express.static(path.join(__dirname, 'fonts')));
 
+// Serve frontend static files
+const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
+app.use(express.static(frontendBuildPath));
+
 // Request logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -78,7 +82,20 @@ app.get('/', (req, res) => {
   });
 });
 
-// 404 handler
+// Serve frontend for all non-API routes (for React Router)
+app.get('*', (req, res) => {
+  // Skip API routes
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({
+      success: false,
+      message: 'API route not found',
+    });
+  }
+
+  res.sendFile(path.join(frontendBuildPath, 'index.html'));
+});
+
+// 404 handler (this won't be reached due to catch-all above, but keeping for completeness)
 app.use((req, res) => {
   res.status(404).json({
     success: false,
