@@ -727,10 +727,24 @@ const buildDedicationPageContent = ({
   book,
   readerName,
   readerGender,
+  readerSecondTitle,
   storyPages = [],
   jobPage = null,
 }) => {
   const dedicationPage = sanitizeDedicationForSnapshot(book.dedicationPage) || {};
+
+  // Replace {name} placeholder in title with actual reader name
+  if (dedicationPage.title && readerName) {
+    dedicationPage.title = dedicationPage.title.replace(/\{name\}/gi, readerName);
+  }
+
+  // Prioritize user's secondTitle over book's dedication secondTitle
+  if (readerSecondTitle) {
+    dedicationPage.secondTitle = readerSecondTitle;
+  } else if (dedicationPage.secondTitle && readerName) {
+    // If no user secondTitle, use book's secondTitle with name replacement
+    dedicationPage.secondTitle = dedicationPage.secondTitle.replace(/\{name\}/gi, readerName);
+  }
 
   const firstStoryBackground = storyPages.find((page) =>
     Boolean(page?.background && (page.background.key || page.background.url))
@@ -1431,9 +1445,10 @@ const processStorybookJob = async (jobId) => {
     throw new Error('Training must be successful with a model version');
   }
 
-  const reader = job.readerId ? await User.findById(job.readerId).select('name gender') : null;
+  const reader = job.readerId ? await User.findById(job.readerId).select('name gender secondTitle') : null;
   const readerName = job.readerName || reader?.name || '';
   const readerGender = job.readerGender || reader?.gender || '';
+  const readerSecondTitle = job.readerSecondTitle || reader?.secondTitle || '';
 
   await updateJobAndEmit({
     jobId: job._id,
@@ -1561,6 +1576,7 @@ const processStorybookJob = async (jobId) => {
     book: refreshedBook,
     readerName,
     readerGender,
+    readerSecondTitle,
     storyPages,
     jobPage: dedicationJobPage,
   });
@@ -1708,6 +1724,7 @@ const startStorybookAutomation = async ({
   readerId,
   readerName,
   readerGender,
+  readerSecondTitle,
   title,
 }) => {
   const book = await Book.findById(bookId);
@@ -1736,15 +1753,19 @@ const startStorybookAutomation = async ({
   const resolvedReaderId = readerId || userId;
   let resolvedReaderName = readerName || user.name || '';
   let resolvedReaderGender = normalizeGenderValue(readerGender) || normalizeGenderValue(user.gender);
+  let resolvedReaderSecondTitle = readerSecondTitle || user.secondTitle || '';
 
   if (resolvedReaderId) {
-    const readerDoc = await User.findById(resolvedReaderId).select('name gender');
+    const readerDoc = await User.findById(resolvedReaderId).select('name gender secondTitle');
     if (readerDoc) {
       if (!resolvedReaderName && readerDoc.name) {
         resolvedReaderName = readerDoc.name;
       }
       if (!resolvedReaderGender && readerDoc.gender) {
         resolvedReaderGender = normalizeGenderValue(readerDoc.gender);
+      }
+      if (!resolvedReaderSecondTitle && readerDoc.secondTitle) {
+        resolvedReaderSecondTitle = readerDoc.secondTitle;
       }
     }
   }
@@ -1763,6 +1784,7 @@ const startStorybookAutomation = async ({
     readerId: resolvedReaderId,
     readerName: resolvedReaderName,
     readerGender: resolvedReaderGender,
+    readerSecondTitle: resolvedReaderSecondTitle,
     title: title || `${book.name} Storybook`,
     status: 'queued',
     progress: 0,
