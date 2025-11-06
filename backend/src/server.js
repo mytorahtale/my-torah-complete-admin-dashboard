@@ -62,8 +62,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Root route
-app.get('/', (req, res) => {
+// API overview route
+app.get('/api', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Welcome to AI Book Story API',
@@ -80,6 +80,11 @@ app.get('/', (req, res) => {
       health: '/health',
     },
   });
+});
+
+// Root route - serve the frontend entry point
+app.get('/', (req, res) => {
+  res.sendFile(path.join(frontendBuildPath, 'index.html'));
 });
 
 // Serve frontend for all non-API routes (for React Router)
