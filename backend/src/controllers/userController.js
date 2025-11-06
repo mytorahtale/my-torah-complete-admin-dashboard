@@ -19,6 +19,61 @@ const toPositiveInteger = (value, fallback) => {
 
 const VALID_SORT_FIELDS = new Set(['createdAt', 'updatedAt', 'name', 'age', 'email']);
 
+const sanitiseUserPayload = (source = {}) => {
+  const payload = {};
+
+  if (typeof source.name === 'string') {
+    const trimmed = source.name.trim();
+    if (trimmed) {
+      payload.name = trimmed;
+    }
+  }
+
+  if (source.age !== undefined && source.age !== null && `${source.age}`.trim() !== '') {
+    const parsed = Number.parseInt(source.age, 10);
+    if (!Number.isNaN(parsed)) {
+      payload.age = parsed;
+    }
+  }
+
+  if (typeof source.gender === 'string') {
+    const trimmed = source.gender.trim();
+    if (trimmed) {
+      payload.gender = trimmed;
+    }
+  }
+
+  if (typeof source.email === 'string') {
+    const trimmed = source.email.trim();
+    if (trimmed) {
+      payload.email = trimmed;
+    }
+  }
+
+  if (typeof source.countryCode === 'string') {
+    const trimmed = source.countryCode.trim();
+    if (trimmed) {
+      payload.countryCode = trimmed;
+    }
+  }
+
+  if (typeof source.phoneNumber === 'string') {
+    const trimmed = source.phoneNumber.trim();
+    if (trimmed) {
+      payload.phoneNumber = trimmed;
+    }
+  }
+
+  if (typeof source.status === 'string') {
+    const trimmed = source.status.trim();
+    if (trimmed) {
+      payload.status = trimmed;
+    }
+  }
+
+  return payload;
+};
+
 /**
  * Get all users
  * @route GET /api/users
@@ -201,15 +256,10 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    const { name, age, gender, email, countryCode, phoneNumber } = req.body;
+    const payload = sanitiseUserPayload(req.body);
 
     const user = await User.create({
-      name,
-      age,
-      gender,
-      email,
-      countryCode,
-      phoneNumber,
+      ...payload,
       imageAssets: [],
     });
 
@@ -243,7 +293,7 @@ exports.updateUser = async (req, res) => {
       });
     }
 
-    const { name, age, gender, email, countryCode, phoneNumber, status } = req.body;
+    const payload = sanitiseUserPayload(req.body);
 
     // Check if user exists
     let user = await User.findById(req.params.id);
@@ -255,19 +305,10 @@ exports.updateUser = async (req, res) => {
     }
 
     // Update user fields
-    user = await User.findByIdAndUpdate(
-      req.params.id,
-      {
-        name,
-        age,
-        gender,
-        email,
-        countryCode,
-        phoneNumber,
-        status,
-      },
-      { new: true, runValidators: true }
-    );
+    user = await User.findByIdAndUpdate(req.params.id, payload, {
+      new: true,
+      runValidators: true,
+    });
 
     res.status(200).json({
       success: true,

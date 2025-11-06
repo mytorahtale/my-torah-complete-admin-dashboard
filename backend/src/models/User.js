@@ -1,5 +1,17 @@
 const mongoose = require('mongoose');
 
+const toOptionalTrimmedString = (value) => {
+  if (typeof value !== 'string') return value === '' ? undefined : value;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+};
+
+const toOptionalLowercaseString = (value) => {
+  if (typeof value !== 'string') return value === '' ? undefined : value;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed.toLowerCase();
+};
+
 const evaluationSchema = new mongoose.Schema(
   {
     verdict: { type: String, default: null },
@@ -39,39 +51,39 @@ const userSchema = new mongoose.Schema(
     },
     age: {
       type: Number,
-      required: [true, 'Age is required'],
-      min: [1, 'Age must be at least 1'],
+      min: [0, 'Age must be at least 0'],
       max: [150, 'Age cannot exceed 150'],
+      default: null,
     },
     gender: {
       type: String,
-      required: [true, 'Gender is required'],
       enum: {
         values: ['male', 'female', 'other'],
         message: '{VALUE} is not a valid gender',
       },
+      set: toOptionalTrimmedString,
     },
     email: {
       type: String,
-      required: [true, 'Email is required'],
       trim: true,
       lowercase: true,
       match: [
         /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
         'Please enter a valid email address',
       ],
+      set: toOptionalLowercaseString,
     },
     countryCode: {
       type: String,
-      required: [true, 'Country code is required'],
       trim: true,
       match: [/^\+\d{1,4}$/, 'Please enter a valid country code (e.g., +1, +91)'],
+      set: toOptionalTrimmedString,
     },
     phoneNumber: {
       type: String,
-      required: [true, 'Phone number is required'],
       trim: true,
       match: [/^\d{6,15}$/, 'Please enter a valid phone number'],
+      set: toOptionalTrimmedString,
     },
     imageAssets: {
       type: [imageAssetSchema],
@@ -93,7 +105,8 @@ userSchema.index({ status: 1 });
 
 // Virtual for full phone number
 userSchema.virtual('fullPhoneNumber').get(function () {
-  return `${this.countryCode}${this.phoneNumber}`;
+  const parts = [this.countryCode, this.phoneNumber].filter(Boolean);
+  return parts.join(' ');
 });
 
 userSchema.methods.removeImageAsset = function (assetId) {

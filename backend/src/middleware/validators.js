@@ -12,39 +12,33 @@ exports.validateUser = [
     .withMessage('Name must be between 2 and 100 characters'),
 
   body('age')
-    .notEmpty()
-    .withMessage('Age is required')
-    .isInt({ min: 1, max: 150 })
-    .withMessage('Age must be between 1 and 150'),
+    .optional({ checkFalsy: true })
+    .isInt({ min: 0, max: 150 })
+    .withMessage('Age must be between 0 and 150'),
 
   body('gender')
-    .notEmpty()
-    .withMessage('Gender is required')
+    .optional({ checkFalsy: true })
     .isIn(['male', 'female', 'other'])
     .withMessage('Gender must be male, female, or other'),
 
   body('email')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty()
-    .withMessage('Email is required')
     .isEmail()
     .withMessage('Please provide a valid email address')
     .normalizeEmail(),
 
   body('countryCode')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty()
-    .withMessage('Country code is required')
     .matches(/^\+\d{1,4}$/)
     .withMessage('Country code must be in format +XX'),
 
   body('phoneNumber')
+    .optional({ checkFalsy: true })
     .trim()
-    .notEmpty()
-    .withMessage('Phone number is required')
     .matches(/^\d{6,15}$/)
     .withMessage('Phone number must be 6-15 digits'),
-
 ];
 
 const BOOK_GENDERS = ['male', 'female', 'both'];
