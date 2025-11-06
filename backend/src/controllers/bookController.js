@@ -1849,10 +1849,53 @@ exports.getStorybookAssetPages = async (req, res) => {
       preferSnapshotAssets: true,
     });
 
+    // For cover and dedication pages, ensure we include the latest character images
+    const enhancedPages = await Promise.all(
+      pages.map(async (page) => {
+        const clonedPage = { ...page };
+
+        // For cover pages, include the book's cover page data with fresh URLs
+        if (clonedPage.pageType === 'cover' && book.coverPage) {
+          clonedPage.coverPage = clonePlainObject(book.coverPage);
+          if (book.coverPage.characterImage) {
+            clonedPage.coverPage.characterImage = await attachFreshSignedUrl(book.coverPage.characterImage);
+          }
+          if (book.coverPage.characterImageOriginal) {
+            clonedPage.coverPage.characterImageOriginal = await attachFreshSignedUrl(book.coverPage.characterImageOriginal);
+          }
+          if (book.coverPage.backgroundImage) {
+            clonedPage.coverPage.backgroundImage = await attachFreshSignedUrl(book.coverPage.backgroundImage);
+          }
+          if (book.coverPage.qrCode) {
+            clonedPage.coverPage.qrCode = await attachFreshSignedUrl(book.coverPage.qrCode);
+          }
+        }
+
+        // For dedication pages, include the book's dedication page data with fresh URLs
+        if (clonedPage.pageType === 'dedication' && book.dedicationPage) {
+          clonedPage.dedicationPage = clonePlainObject(book.dedicationPage);
+          if (book.dedicationPage.kidImage) {
+            clonedPage.dedicationPage.kidImage = await attachFreshSignedUrl(book.dedicationPage.kidImage);
+          }
+          if (book.dedicationPage.generatedImage) {
+            clonedPage.dedicationPage.generatedImage = await attachFreshSignedUrl(book.dedicationPage.generatedImage);
+          }
+          if (book.dedicationPage.generatedImageOriginal) {
+            clonedPage.dedicationPage.generatedImageOriginal = await attachFreshSignedUrl(book.dedicationPage.generatedImageOriginal);
+          }
+          if (book.dedicationPage.backgroundImage) {
+            clonedPage.dedicationPage.backgroundImage = await attachFreshSignedUrl(book.dedicationPage.backgroundImage);
+          }
+        }
+
+        return clonedPage;
+      })
+    );
+
     res.status(200).json({
       success: true,
       data: {
-        pages,
+        pages: enhancedPages,
       },
     });
   } catch (error) {
@@ -2434,7 +2477,16 @@ exports.regenerateStorybookPdf = async (req, res) => {
     let backgroundRemovalApplied = false;
 
     for (const bookPage of sortedBookPages) {
-      const snapshot = (pdfAssetDoc.pages || []).find((page) => page.order === bookPage.order) || {};
+      const snapshot =
+        (pdfAssetDoc.pages || []).find((page) => {
+          if (page.pageId && bookPage._id && page.pageId.toString() === bookPage._id.toString()) {
+            return true;
+          }
+          if (Number.isFinite(page.bookPageOrder)) {
+            return Number(page.bookPageOrder) === Number(bookPage.order);
+          }
+          return Number(page.order) === Number(bookPage.order);
+        }) || {};
 
       const backgroundSource = bookPage.backgroundImage
         ? await attachFreshSignedUrl(bookPage.backgroundImage)
@@ -2460,7 +2512,9 @@ exports.regenerateStorybookPdf = async (req, res) => {
           ? snapshotPosition
           : normalizeCharacterPosition(bookPage.characterPosition, 'auto');
       const storyPage = {
-        order: bookPage.order,
+        pageId: bookPage._id,
+        order: Number.isFinite(bookPage.order) ? Number(bookPage.order) : null,
+        bookPageOrder: Number.isFinite(bookPage.order) ? Number(bookPage.order) : null,
         text: snapshot.text || bookPage.text || '',
         quote: snapshot.quote || '',
         background: backgroundSource,
@@ -2527,8 +2581,9 @@ exports.regenerateStorybookPdf = async (req, res) => {
     const frontMatterPages = [];
 
     // Find cover and dedication page data from the existing PDF to preserve candidates
-    const coverPdfPage = (pdfAssetDoc.pages || []).find((page) => page.order === 0);
+    const coverPdfPage = (pdfAssetDoc.pages || []).find((page) => page.pageType === 'cover');
     const coverJobPage = coverPdfPage ? {
+      order: Number.isFinite(coverPdfPage.order) ? Number(coverPdfPage.order) : null,
       generationId: coverPdfPage.generationId || null,
       candidateAssets: coverPdfPage.candidateAssets || [],
       selectedCandidateIndex: coverPdfPage.selectedCandidateIndex,
@@ -2547,8 +2602,11 @@ exports.regenerateStorybookPdf = async (req, res) => {
       frontMatterPages.push(coverFrontMatter);
     }
 
-    const dedicationPdfPage = (pdfAssetDoc.pages || []).find((page) => page.order === 0.5);
+    const dedicationPdfPage = (pdfAssetDoc.pages || []).find(
+      (page) => page.pageType === 'dedication'
+    );
     const dedicationJobPage = dedicationPdfPage ? {
+      order: Number.isFinite(dedicationPdfPage.order) ? Number(dedicationPdfPage.order) : null,
       generationId: dedicationPdfPage.generationId || null,
       candidateAssets: dedicationPdfPage.candidateAssets || [],
       selectedCandidateIndex: dedicationPdfPage.selectedCandidateIndex,
@@ -2611,7 +2669,9 @@ exports.regenerateStorybookPdf = async (req, res) => {
 
     const now = new Date();
     const pagesSnapshot = assembledPages.map((page, pageIndex) => ({
-      order: page.order,
+      pageId: page.pageId || null,
+      order: pageIndex + 1,
+      bookPageOrder: Number.isFinite(page.bookPageOrder) ? Number(page.bookPageOrder) : null,
       text: page.text || '',
       quote: page.quote || '',
       prompt: page.prompt || '',

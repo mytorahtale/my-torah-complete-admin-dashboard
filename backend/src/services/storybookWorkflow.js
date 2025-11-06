@@ -278,15 +278,6 @@ const resolvePromptByGender = (source = {}, gender = '') => {
   return neutral || male || female || '';
 };
 
-const hasAnyPrompt = (source = {}) => {
-  return Boolean(
-    normalizePromptText(source.characterPrompt) ||
-      normalizePromptText(source.characterPromptMale) ||
-      normalizePromptText(source.characterPromptFemale) ||
-      normalizePromptText(source.prompt)
-  );
-};
-
 const sanitizeCoverPageForSnapshot = (coverPage) => {
   if (!coverPage || typeof coverPage !== 'object') return null;
   const cloned = clonePlainObject(coverPage) || {};
@@ -764,9 +755,12 @@ const buildCoverPageContent = ({
   coverPage.characterImageOriginal = coverPage.characterImageOriginal || coverPage.characterImage || null;
   const coverPrompt = resolvePromptByGender(coverPage, readerGender);
   coverPage.characterPrompt = coverPrompt;
+  const resolvedOrder = Number.isFinite(jobPage?.order) ? jobPage.order : 1;
 
   return {
-    order: 0,
+    pageId: null,
+    order: resolvedOrder,
+    bookPageOrder: null,
     text: '',
     quote: '',
     background: coverPage.backgroundImage,
@@ -811,11 +805,7 @@ const buildDedicationPageContent = ({
     dedicationPage.backgroundImage = sanitizeAssetForSnapshot(firstStoryBackground.background);
   }
   if (!dedicationPage.kidImage) {
-    const fallbackKid =
-      (firstStoryCharacterOriginal && firstStoryCharacterOriginal.characterOriginal) ||
-      (firstStoryCharacter && firstStoryCharacter.character) ||
-      null;
-    dedicationPage.kidImage = fallbackKid ? sanitizeAssetForSnapshot(fallbackKid) : null;
+    dedicationPage.kidImage = null;
   }
 
   if (!dedicationPage.backgroundImage) {
@@ -828,9 +818,12 @@ const buildDedicationPageContent = ({
     dedicationPage.generatedImageOriginal || dedicationPage.generatedImage || null;
   const dedicationPrompt = resolvePromptByGender(dedicationPage, readerGender);
   dedicationPage.characterPrompt = dedicationPrompt;
+  const resolvedOrder = Number.isFinite(jobPage?.order) ? jobPage.order : 1;
 
   return {
-    order: 0.5,
+    pageId: null,
+    order: resolvedOrder,
+    bookPageOrder: null,
     text: '',
     quote: '',
     background: dedicationPage.backgroundImage,
@@ -911,9 +904,15 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
     jobCharacterPosition !== null
       ? jobCharacterPosition
       : normalizeCharacterPosition(bookPage.characterPosition, 'auto');
+  const bookPageOrder = Number.isFinite(jobPage?.bookPageOrder)
+    ? jobPage.bookPageOrder
+    : bookPage.order;
+  const resolvedOrder = Number.isFinite(jobPage?.order) ? jobPage.order : bookPageOrder;
 
   return {
-    order: bookPage.order,
+    pageId: bookPage._id,
+    order: resolvedOrder,
+    bookPageOrder: Number.isFinite(bookPageOrder) ? bookPageOrder : null,
     text: resolvedText,
     prompt: resolvedPrompt,
     background: bookPage.backgroundImage || null,
@@ -922,6 +921,7 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
       jobPage.characterAssetOriginal || bookPage.characterImageOriginal || null,
     quote: '',
     characterPosition: resolvedCharacterPosition,
+    characterPositionResolved: resolvedCharacterPosition,
     generationId: jobPage?.generationId || null,
     candidateAssets: sanitizeAssetListForSnapshot(jobPage?.candidateAssets || []),
     selectedCandidateIndex: Number.isFinite(jobPage?.selectedCandidateIndex)
@@ -1021,7 +1021,9 @@ const buildPdfAsset = async ({ book, job, pages }) => {
     confirmedAt: null,
     metadata: null,
     pages: pages.map((page, pageIndex) => ({
-      order: page.order,
+      pageId: page.pageId || null,
+      order: pageIndex + 1,
+      bookPageOrder: Number.isFinite(page.bookPageOrder) ? Number(page.bookPageOrder) : null,
       text: page.text || '',
       quote: page.quote || '',
       background: sanitizeAssetForSnapshot(page.background),
@@ -1040,6 +1042,8 @@ const buildPdfAsset = async ({ book, job, pages }) => {
       dedicationPage: sanitizeDedicationForSnapshot(page.dedicationPage),
       renderedImage: sanitizeAssetForSnapshot(renderedByIndex.get(pageIndex)),
       childName: typeof page.childName === 'string' ? page.childName : '',
+      characterPosition: page.characterPosition || 'auto',
+      characterPositionResolved: page.characterPositionResolved || null,
       updatedAt: new Date(),
     })),
   };
@@ -1619,8 +1623,8 @@ const processStorybookJob = async (jobId) => {
 
   const frontMatterPages = [];
 
-  // Find job page for cover (order 0)
-  const coverJobPage = refreshedJob.pages.find((page) => page.pageType === 'cover' || page.order === 0);
+  // Find job page for cover
+  const coverJobPage = refreshedJob.pages.find((page) => page.pageType === 'cover');
   const coverContent = buildCoverPageContent({
     book: refreshedBook,
     readerName,
@@ -1632,8 +1636,8 @@ const processStorybookJob = async (jobId) => {
     frontMatterPages.push(coverContent);
   }
 
-  // Find job page for dedication (order 0.5)
-  const dedicationJobPage = refreshedJob.pages.find((page) => page.pageType === 'dedication' || page.order === 0.5);
+  // Find job page for dedication
+  const dedicationJobPage = refreshedJob.pages.find((page) => page.pageType === 'dedication');
   const dedicationContent = buildDedicationPageContent({
     book: refreshedBook,
     readerName,
@@ -1717,11 +1721,19 @@ const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
   const dedication = book.dedicationPage || {};
 
   const coverPrompt = resolvePromptByGender(cover, readerGender);
-  const hasCoverFrontMatter = Boolean(cover.backgroundImage) || Boolean(coverPrompt?.trim());
-  if (hasCoverFrontMatter) {
+  const dedicationPrompt = resolvePromptByGender(dedication, readerGender);
+  const hasCover =
+    Boolean(cover.backgroundImage) || Boolean(coverPrompt && coverPrompt.trim());
+  const hasDedication =
+    Boolean(dedication.backgroundImage) || Boolean(dedicationPrompt && dedicationPrompt.trim());
+
+  let nextOrder = 1;
+
+  if (hasCover) {
     jobPages.push({
       pageId: null,
-      order: 0,
+      order: nextOrder,
+      bookPageOrder: null,
       prompt: coverPrompt,
       text: '',
       pageType: 'cover',
@@ -1729,15 +1741,14 @@ const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
       progress: 0,
       events: [createEvent('page-queued', 'Cover page queued for generation')],
     });
+    nextOrder += 1;
   }
 
-  const dedicationPrompt = resolvePromptByGender(dedication, readerGender);
-  const hasDedicationFrontMatter =
-    Boolean(dedication.backgroundImage) || Boolean(dedicationPrompt?.trim());
-  if (hasDedicationFrontMatter) {
+  if (hasDedication) {
     jobPages.push({
       pageId: null,
-      order: hasCoverFrontMatter ? 0.5 : 0,
+      order: nextOrder,
+      bookPageOrder: null,
       prompt: dedicationPrompt,
       text: '',
       pageType: 'dedication',
@@ -1745,36 +1756,48 @@ const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
       progress: 0,
       events: [createEvent('page-queued', 'Dedication page queued for generation')],
     });
+    nextOrder += 1;
   }
 
   const storyPages = (book.pages || [])
     .slice()
     .sort((a, b) => (a.order || 0) - (b.order || 0))
-    .map((page) => ({
-      pageId: page._id,
-      order: page.order,
-      prompt: resolvePromptByGender(page, readerGender),
-      text: page.text || '',
-      backgroundImage: page.backgroundImage,
-      pageType: page.pageType === 'cover' ? 'cover' : 'story',
-      characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
-      status: 'queued',
-      progress: 0,
-      events: [createEvent('page-queued', 'Page queued for generation')],
-    }))
-    .filter((page) => {
-      const hasPrompt = Boolean(page.prompt && page.prompt.trim());
+    .map((page) => {
+      const resolvedPrompt = resolvePromptByGender(page, readerGender);
+      const jobOrder = nextOrder;
+      nextOrder += 1;
+      const originalOrder = Number.isFinite(page.order) ? page.order : null;
+      const hasPrompt = Boolean(resolvedPrompt && resolvedPrompt.trim());
       const hasText = Boolean(page.text && page.text.trim());
       const hasBackgroundImage = Boolean(page.backgroundImage);
       const isValid = hasPrompt || hasText || hasBackgroundImage;
 
       if (!isValid) {
-        console.warn(`[storybook] Skipping page ${page.order} - no content. prompt: ${hasPrompt}, text: ${hasText}, backgroundImage: ${hasBackgroundImage}`);
-      } else {
-        console.log(`[storybook] Including page ${page.order} - prompt: ${hasPrompt}, text: ${hasText}, backgroundImage: ${hasBackgroundImage}`);
+        console.warn(
+          `[storybook] Skipping page ${originalOrder ?? jobOrder} - no content. prompt: ${hasPrompt}, text: ${hasText}, backgroundImage: ${hasBackgroundImage}`
+        );
+        return null;
       }
-      return isValid;
-    });
+
+      console.log(
+        `[storybook] Including page ${originalOrder ?? jobOrder} - prompt: ${hasPrompt}, text: ${hasText}, backgroundImage: ${hasBackgroundImage}`
+      );
+
+      return {
+        pageId: page._id,
+        order: jobOrder,
+        bookPageOrder: originalOrder,
+        prompt: resolvedPrompt,
+        text: page.text || '',
+        backgroundImage: page.backgroundImage,
+        pageType: page.pageType === 'cover' ? 'cover' : 'story',
+        characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
+        status: 'queued',
+        progress: 0,
+        events: [createEvent('page-queued', 'Page queued for generation')],
+      };
+    })
+    .filter(Boolean);
 
   return [...jobPages, ...storyPages];
 };
@@ -1903,47 +1926,34 @@ const regenerateStorybookPage = async ({
     throw new Error('Book not found');
   }
 
-  const normalisedToken =
-    typeof pageOrder === 'string' ? pageOrder.trim().toLowerCase() : '';
   const numericOrder = Number(pageOrder);
-  const isNumericOrder = Number.isFinite(numericOrder);
-  const approxEq = (value, target) => Math.abs(value - target) < 1e-3;
-
-  let targetPage = null;
-  let targetOrder = null;
-  let pageType = 'story';
-
-  if (normalisedToken === 'cover' || (isNumericOrder && approxEq(numericOrder, 0))) {
-    pageType = 'cover';
-    targetOrder = 0;
-  } else if (
-    normalisedToken === 'dedication' ||
-    (isNumericOrder && approxEq(numericOrder, 0.5))
-  ) {
-    pageType = 'dedication';
-    targetOrder = 0.5;
-  } else {
-    if (isNumericOrder && numericOrder > 0) {
-      targetPage = book.pages.find((page) => page.order === numericOrder) || null;
-      if (targetPage) {
-        targetOrder = numericOrder;
-      }
-    }
-    if (!targetPage && mongoose.Types.ObjectId.isValid(pageOrder)) {
-      const pageDoc = book.pages.id(pageOrder);
-      if (pageDoc) {
-        targetPage = pageDoc;
-        targetOrder = pageDoc.order;
-      }
-    }
-    if (!targetPage) {
-      throw new Error('Requested page was not found in this book');
-    }
-    if (!targetOrder) {
-      targetOrder = targetPage.order;
-    }
-    pageType = targetPage.pageType === 'cover' ? 'cover' : 'story';
+  if (!Number.isInteger(numericOrder) || numericOrder <= 0) {
+    throw new Error('Page order must be a positive integer');
   }
+
+  let pdfAsset = null;
+  if (assetId) {
+    pdfAsset =
+      (mongoose.Types.ObjectId.isValid(assetId) && book.pdfAssets.id(assetId)) ||
+      book.pdfAssets.find((asset) => asset.key === assetId) ||
+      null;
+  }
+
+  if (!pdfAsset || !Array.isArray(pdfAsset.pages)) {
+    throw new Error('Storybook page snapshot missing');
+  }
+
+  const pageIndex = numericOrder - 1;
+  if (pageIndex < 0 || pageIndex >= pdfAsset.pages.length) {
+    throw new Error('Storybook page snapshot missing');
+  }
+
+  const pdfPage = pdfAsset.pages[pageIndex] || {};
+
+  const pageType =
+    pdfPage.pageType === 'cover' || pdfPage.pageType === 'dedication'
+      ? pdfPage.pageType
+      : 'story';
 
   if (pageType === 'cover' && !book.coverPage) {
     throw new Error('Cover page is not configured for this book');
@@ -1951,6 +1961,26 @@ const regenerateStorybookPage = async ({
   if (pageType === 'dedication' && !book.dedicationPage) {
     throw new Error('Dedication page is not configured for this book');
   }
+
+  let targetPage = null;
+  let bookPageOrder = null;
+  if (pageType === 'story') {
+    const pageId = pdfPage.pageId ? pdfPage.pageId.toString() : null;
+    if (pageId) {
+      targetPage = book.pages.id(pageId) || null;
+    }
+    if (!targetPage && Number.isFinite(pdfPage.bookPageOrder)) {
+      targetPage =
+        book.pages.find((page) => Number(page.order) === Number(pdfPage.bookPageOrder)) ||
+        null;
+    }
+    if (!targetPage) {
+      throw new Error('Requested page was not found in this book');
+    }
+    bookPageOrder = Number(targetPage.order);
+  }
+
+  const resolvedTargetOrder = numericOrder;
 
   const training = await Training.findById(trainingId);
   if (!training) {
@@ -1973,30 +2003,19 @@ const regenerateStorybookPage = async ({
     }
   }
 
-  const safeTextValue = (value) => (typeof value === 'string' ? value : '');
-
   let promptSource = '';
-  let fallbackText = '';
 
   if (targetPage) {
     promptSource = resolvePromptByGender(targetPage, resolvedReaderGender);
-    fallbackText = safeTextValue(targetPage.text);
   } else if (pageType === 'cover') {
     const coverCfg = book.coverPage || {};
     promptSource = resolvePromptByGender(coverCfg, resolvedReaderGender);
-    if (!promptSource) {
-      fallbackText = safeTextValue(coverCfg.leftSide?.content);
-    }
   } else if (pageType === 'dedication') {
     const dedicationCfg = book.dedicationPage || {};
     promptSource = resolvePromptByGender(dedicationCfg, resolvedReaderGender);
-    if (!promptSource) {
-      fallbackText =
-        safeTextValue(dedicationCfg.title) || safeTextValue(dedicationCfg.secondTitle);
-    }
   }
 
-  const rawPrompt = promptSource || fallbackText;
+  const rawPrompt = promptSource;
   if (!rawPrompt) {
     throw new Error('Unable to determine a character prompt for this page');
   }
@@ -2014,7 +2033,7 @@ const regenerateStorybookPage = async ({
     megapixels: '1',
     lora_scale: 1,
     extra_lora_scale: 1,
-    pageOrder: targetOrder,
+    pageOrder: resolvedTargetOrder,
   };
 
   const createdAt = new Date();
@@ -2037,7 +2056,7 @@ const regenerateStorybookPage = async ({
       promptStrength: generationInput.prompt_strength || 0.8,
       extraLoraScale: generationInput.extra_lora_scale,
       numInferenceSteps: generationInput.num_inference_steps,
-      pageOrder: targetOrder,
+      pageOrder: resolvedTargetOrder,
       pageType,
     },
     status: 'queued',
@@ -2047,7 +2066,7 @@ const regenerateStorybookPage = async ({
     storybookContext: {
       bookId,
       pageId: targetPage?._id || null,
-      pageOrder: targetOrder,
+      pageOrder: resolvedTargetOrder,
       pageType,
       runType: 'storybook-regenerate',
     },
@@ -2057,7 +2076,7 @@ const regenerateStorybookPage = async ({
         message: 'Storybook page regeneration queued',
         metadata: {
           bookId,
-          pageOrder: targetOrder,
+          pageOrder: resolvedTargetOrder,
         },
         timestamp: createdAt,
       },
@@ -2099,9 +2118,14 @@ const regenerateStorybookPage = async ({
     throw new Error('No winning asset found for regenerated page');
   }
 
+  const storyOrder =
+    pageType === 'story'
+      ? Number(bookPageOrder || targetPage?.order || pdfPage.bookPageOrder || 0)
+      : resolvedTargetOrder;
+
   const pageContext = {
     pageId: targetPage?._id || null,
-    order: targetOrder,
+    order: storyOrder,
     pageType,
   };
 
@@ -2112,7 +2136,7 @@ const regenerateStorybookPage = async ({
   });
 
   if (!bookCharacterAsset) {
-    throw new Error(`Cannot regenerate page ${targetOrder} - generated asset file not found in S3 (key: ${winner.asset.key})`);
+    throw new Error(`Cannot regenerate page ${resolvedTargetOrder} - generated asset file not found in S3 (key: ${winner.asset.key})`);
   }
 
   const sanitizedOriginalAsset = sanitizeAssetForSnapshot(winner.asset);
@@ -2133,6 +2157,16 @@ const regenerateStorybookPage = async ({
     const assetFilter = mongoose.Types.ObjectId.isValid(assetId)
       ? { 'asset._id': new mongoose.Types.ObjectId(assetId) }
       : { 'asset.key': assetId };
+    const originalPdfOrder = Number(pdfPage.order);
+    const pdfPageFilter =
+      pageType === 'cover' || pageType === 'dedication'
+        ? { 'page.pageType': pageType }
+        : Number.isFinite(originalPdfOrder) && originalPdfOrder > 0
+        ? { 'page.order': originalPdfOrder }
+        : Number.isFinite(pdfPage.bookPageOrder)
+        ? { 'page.bookPageOrder': Number(pdfPage.bookPageOrder) }
+        : { 'page.order': resolvedTargetOrder };
+
     await Book.updateOne(
       { _id: bookId },
       {
@@ -2145,11 +2179,16 @@ const regenerateStorybookPage = async ({
           'pdfAssets.$[asset].pages.$[page].generationId': generation._id,
           'pdfAssets.$[asset].pages.$[page].selectedCandidateIndex': winner.winner,
           'pdfAssets.$[asset].pages.$[page].updatedAt': timestamp,
+          'pdfAssets.$[asset].pages.$[page].order': resolvedTargetOrder,
+          'pdfAssets.$[asset].pages.$[page].bookPageOrder': Number.isFinite(targetPage?.order)
+            ? Number(targetPage.order)
+            : null,
+          'pdfAssets.$[asset].pages.$[page].pageId': targetPage?._id || null,
           'pdfAssets.$[asset].updatedAt': timestamp,
         },
       },
       {
-        arrayFilters: [assetFilter, { 'page.order': targetOrder }],
+        arrayFilters: [assetFilter, pdfPageFilter],
       }
     ).catch((error) => {
       console.warn(
@@ -2163,7 +2202,9 @@ const regenerateStorybookPage = async ({
   const refreshedPage =
     targetPage && refreshedBook
       ? refreshedBook.pages.id(targetPage._id) ||
-        refreshedBook.pages.find((page) => page.order === targetOrder) ||
+        refreshedBook.pages.find(
+          (page) => page._id && page._id.toString() === targetPage._id.toString()
+        ) ||
         null
       : null;
 
@@ -2174,7 +2215,11 @@ const regenerateStorybookPage = async ({
       refreshedBook.pdfAssets.find((asset) => asset.key === assetId);
     if (candidateAsset && Array.isArray(candidateAsset.pages)) {
       refreshedPdfAssetPage =
-        candidateAsset.pages.find((page) => page.order === targetOrder) || null;
+        candidateAsset.pages.find(
+          (page, idx) =>
+            page.order === resolvedTargetOrder ||
+            idx === pageIndex
+        ) || null;
     }
   }
 
@@ -2199,7 +2244,7 @@ const regenerateStorybookPage = async ({
     coverPage: refreshedCoverPage,
     dedicationPage: refreshedDedicationPage,
     pageType,
-    order: targetOrder,
+    order: resolvedTargetOrder,
   };
 };
 
@@ -2234,47 +2279,25 @@ const applyStorybookCandidateSelection = async ({
     throw new Error('Storybook asset not found');
   }
 
-  const normalisedToken =
-    typeof pageOrder === 'string' ? pageOrder.trim().toLowerCase() : '';
   const numericOrder = Number(pageOrder);
-  const isNumericOrder = Number.isFinite(numericOrder);
-  const approxEq = (value, target) => Math.abs(value - target) < 1e-3;
-
-  let pageType = 'story';
-  let targetOrder = null;
-  let bookPage = null;
-
-  if (normalisedToken === 'cover' || (isNumericOrder && approxEq(numericOrder, 0))) {
-    pageType = 'cover';
-    targetOrder = 0;
-  } else if (
-    normalisedToken === 'dedication' ||
-    (isNumericOrder && approxEq(numericOrder, 0.5))
-  ) {
-    pageType = 'dedication';
-    targetOrder = 0.5;
-  } else {
-    if (isNumericOrder && numericOrder > 0) {
-      bookPage = book.pages.find((page) => page.order === numericOrder) || null;
-      if (bookPage) {
-        targetOrder = numericOrder;
-      }
-    }
-    if (!bookPage && mongoose.Types.ObjectId.isValid(pageOrder)) {
-      const pageDoc = book.pages.id(pageOrder);
-      if (pageDoc) {
-        bookPage = pageDoc;
-        targetOrder = pageDoc.order;
-      }
-    }
-    if (!bookPage) {
-      throw new Error('Requested page was not found');
-    }
-    if (!targetOrder) {
-      targetOrder = bookPage.order;
-    }
-    pageType = bookPage.pageType === 'cover' ? 'cover' : 'story';
+  if (!Number.isInteger(numericOrder) || numericOrder <= 0) {
+    throw new Error('Page order must be a positive integer');
   }
+
+  const pageIndex = numericOrder - 1;
+  if (
+    !Array.isArray(pdfAsset.pages) ||
+    pageIndex < 0 ||
+    pageIndex >= pdfAsset.pages.length
+  ) {
+    throw new Error('Storybook page snapshot missing');
+  }
+
+  const currentPdfPage = pdfAsset.pages[pageIndex] || {};
+  const pageType =
+    currentPdfPage.pageType === 'cover' || currentPdfPage.pageType === 'dedication'
+      ? currentPdfPage.pageType
+      : 'story';
 
   if (pageType === 'cover' && !book.coverPage) {
     throw new Error('Cover page is not configured for this book');
@@ -2283,20 +2306,33 @@ const applyStorybookCandidateSelection = async ({
     throw new Error('Dedication page is not configured for this book');
   }
 
-  const pageIndex = pdfAsset.pages.findIndex((page) => page.order === targetOrder);
-  if (pageIndex === -1) {
-    throw new Error('Storybook page snapshot missing');
+  let bookPage = null;
+  if (pageType === 'story') {
+    const pdfPageId = currentPdfPage.pageId
+      ? currentPdfPage.pageId.toString()
+      : null;
+    if (pdfPageId) {
+      bookPage = book.pages.id(pdfPageId) || null;
+    }
+
+    const fallbackBookOrder = Number(currentPdfPage.bookPageOrder);
+    if (!bookPage && Number.isFinite(fallbackBookOrder)) {
+      bookPage =
+        book.pages.find((page) => Number(page.order) === fallbackBookOrder) || null;
+    }
+
+    if (!bookPage) {
+      throw new Error('Requested page was not found');
+    }
   }
 
-  const pdfPage = pdfAsset.pages[pageIndex] || {};
-
-  let candidateAssets = Array.isArray(pdfPage.candidateAssets)
-    ? pdfPage.candidateAssets.slice()
+  let candidateAssets = Array.isArray(currentPdfPage.candidateAssets)
+    ? currentPdfPage.candidateAssets.slice()
     : [];
-  let resolvedGenerationId = pdfPage.generationId || null;
+  let resolvedGenerationId = currentPdfPage.generationId || null;
 
-  if (!candidateAssets.length && pdfPage.generationId) {
-    const generationDoc = await populateForClient(pdfPage.generationId);
+  if (!candidateAssets.length && currentPdfPage.generationId) {
+    const generationDoc = await populateForClient(currentPdfPage.generationId);
     if (generationDoc) {
       candidateAssets = sanitizeAssetListForSnapshot(generationDoc.imageAssets || []);
       resolvedGenerationId = generationDoc._id || resolvedGenerationId;
@@ -2317,11 +2353,18 @@ const applyStorybookCandidateSelection = async ({
     throw new Error('Candidate image is missing required metadata');
   }
 
+  const resolvedTargetOrder = numericOrder;
+
+  const bookOrderForUpdate =
+    pageType === 'story'
+      ? Number(bookPage?.order || currentPdfPage.bookPageOrder || 0)
+      : resolvedTargetOrder;
+
   const appliedAsset = await copyAssetToBookCharacterSlot({
     book,
     page: {
       pageId: bookPage?._id || null,
-      order: targetOrder,
+      order: bookOrderForUpdate,
       pageType,
     },
     asset: candidateAsset,
@@ -2338,7 +2381,7 @@ const applyStorybookCandidateSelection = async ({
     bookId,
     page: {
       pageId: bookPage?._id || null,
-      order: targetOrder,
+      order: bookOrderForUpdate,
       pageType,
     },
     newAsset: appliedAsset,
@@ -2346,10 +2389,20 @@ const applyStorybookCandidateSelection = async ({
   });
 
   const timestamp = new Date();
+  const originalPdfOrder = Number(currentPdfPage.order);
   const sanitizedCandidateAssets = sanitizeAssetListForSnapshot(candidateAssets);
   const assetFilter = mongoose.Types.ObjectId.isValid(assetId)
     ? { 'asset._id': new mongoose.Types.ObjectId(assetId) }
     : { 'asset.key': assetId };
+  const numericResolvedOrder = Number(resolvedTargetOrder);
+  const pageFilter =
+    pageType === 'cover' || pageType === 'dedication'
+      ? { 'page.pageType': pageType }
+      : Number.isFinite(originalPdfOrder) && originalPdfOrder > 0
+      ? { 'page.order': originalPdfOrder }
+      : Number.isFinite(currentPdfPage.bookPageOrder)
+      ? { 'page.bookPageOrder': Number(currentPdfPage.bookPageOrder) }
+      : { 'page.order': numericResolvedOrder };
 
   await Book.updateOne(
     { _id: bookId },
@@ -2361,11 +2414,16 @@ const applyStorybookCandidateSelection = async ({
         'pdfAssets.$[asset].pages.$[page].selectedCandidateIndex': parsedIndex,
         'pdfAssets.$[asset].pages.$[page].updatedAt': timestamp,
         'pdfAssets.$[asset].pages.$[page].generationId': resolvedGenerationId,
+        'pdfAssets.$[asset].pages.$[page].order': numericResolvedOrder,
+        'pdfAssets.$[asset].pages.$[page].bookPageOrder': Number.isFinite(bookPage?.order)
+          ? Number(bookPage.order)
+          : null,
+        'pdfAssets.$[asset].pages.$[page].pageId': bookPage?._id || null,
         'pdfAssets.$[asset].updatedAt': timestamp,
       },
     },
     {
-      arrayFilters: [assetFilter, { 'page.order': targetOrder }],
+      arrayFilters: [assetFilter, pageFilter],
     }
   ).catch((error) => {
     console.warn('[storybook] Failed to persist candidate selection on PDF snapshot:', error);
@@ -2373,8 +2431,12 @@ const applyStorybookCandidateSelection = async ({
 
   const refreshedBook = await Book.findById(bookId);
   const refreshedPage =
-    pageType === 'story'
-      ? refreshedBook?.pages.find((page) => page.order === targetOrder) || null
+    pageType === 'story' && bookPage
+      ? refreshedBook?.pages.id(bookPage._id) ||
+        refreshedBook?.pages.find(
+          (page) => page._id && page._id.toString() === bookPage._id.toString()
+        ) ||
+        null
       : null;
   const refreshedCoverPage =
     pageType === 'cover' ? sanitizeCoverPageForSnapshot(refreshedBook.coverPage) : null;
@@ -2388,7 +2450,11 @@ const applyStorybookCandidateSelection = async ({
       (mongoose.Types.ObjectId.isValid(assetId) && refreshedBook.pdfAssets.id(assetId)) ||
       refreshedBook.pdfAssets.find((asset) => asset.key === assetId);
     if (refreshedPdfAsset && Array.isArray(refreshedPdfAsset.pages)) {
-      refreshedPdfAssetPage = refreshedPdfAsset.pages.find((page) => page.order === targetOrder);
+      refreshedPdfAssetPage = refreshedPdfAsset.pages.find(
+        (page, idx) =>
+          page.order === resolvedTargetOrder ||
+          idx === pageIndex
+      );
     }
   }
 
@@ -2404,7 +2470,7 @@ const applyStorybookCandidateSelection = async ({
     coverPage: refreshedCoverPage,
     dedicationPage: refreshedDedicationPage,
     pageType,
-    order: targetOrder,
+    order: resolvedTargetOrder,
   };
 };
 

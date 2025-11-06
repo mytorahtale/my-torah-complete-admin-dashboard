@@ -46,6 +46,10 @@ const storybookPageSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    bookPageOrder: {
+      type: Number,
+      default: null,
+    },
     prompt: {
       type: String,
       default: '',
@@ -148,13 +152,42 @@ const pdfAssetSchema = new mongoose.Schema(
       type: [
         new mongoose.Schema(
           {
+            pageId: { type: mongoose.Schema.Types.ObjectId, default: null },
             order: { type: Number, required: true },
+            bookPageOrder: { type: Number, default: null },
             text: { type: String, default: '' },
             quote: { type: String, default: '' },
             background: { type: imageAssetSchema, default: null },
             character: { type: imageAssetSchema, default: null },
+            characterOriginal: { type: imageAssetSchema, default: null },
+            candidateAssets: { type: [imageAssetSchema], default: [] },
+            selectedCandidateIndex: { type: Number, default: null },
+            generationId: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: 'Generation',
+              default: null,
+            },
             rankingSummary: { type: String, default: '' },
             rankingNotes: { type: [rankingNoteSchema], default: [] },
+            pageType: {
+              type: String,
+              enum: ['story', 'cover', 'dedication'],
+              default: 'story',
+            },
+            cover: { type: mongoose.Schema.Types.Mixed, default: null },
+            coverPage: { type: mongoose.Schema.Types.Mixed, default: null },
+            dedicationPage: { type: mongoose.Schema.Types.Mixed, default: null },
+            renderedImage: { type: imageAssetSchema, default: null },
+            childName: { type: String, default: '' },
+            characterPosition: {
+              type: String,
+              enum: ['auto', 'left', 'right'],
+              default: 'auto',
+            },
+            characterPositionResolved: {
+              type: String,
+              default: null,
+            },
             updatedAt: { type: Date, default: Date.now },
           },
           { _id: false }

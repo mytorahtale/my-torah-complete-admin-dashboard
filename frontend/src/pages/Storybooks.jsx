@@ -281,7 +281,7 @@ const replacePlaceholders = (value, readerName, readerGender) => {
   return result;
 };
 
-const resolveCoverText = ({ cover = {}, bodyFallback = '', readerName = '' }) => {
+const resolveCoverText = ({ cover = {}, readerName = '' }) => {
   const uppercaseName =
     typeof cover.uppercaseName === 'boolean' ? cover.uppercaseName : true;
   const baseName = readerName || cover.childName || '';
@@ -294,7 +294,7 @@ const resolveCoverText = ({ cover = {}, bodyFallback = '', readerName = '' }) =>
 
   const headline = apply(cover.headline || '');
   const footer = apply(cover.footer || '');
-  const bodyTextRaw = cover.bodyOverride ? apply(cover.bodyOverride) : apply(bodyFallback);
+  const bodyTextRaw = apply(cover.bodyOverride || '');
 
   return {
     headline,
@@ -1292,12 +1292,14 @@ const resolveAssetUrl = (asset) => {
   return '';
 };
 
-const getDisplayPageNumber = (pageType, pageOrder, fallbackIndex) => {
+const getDisplayPageNumber = (pageType, pageOrder) => {
+  const numericOrder = Number(pageOrder);
+  if (Number.isFinite(numericOrder) && numericOrder > 0) {
+    return numericOrder;
+  }
   if (pageType === 'cover') return 1;
   if (pageType === 'dedication') return 2;
-  const baseOrder =
-    Number.isFinite(pageOrder) && pageOrder > 0 ? pageOrder : fallbackIndex + 1;
-  return baseOrder + 2;
+  return 1;
 };
 
 const buildPagePreviewModel = ({
@@ -1313,7 +1315,7 @@ const buildPagePreviewModel = ({
   const safeIndex = Number.isInteger(index) ? index : 0;
   const rawType = page.pageType;
   const pageType = rawType === 'cover' ? 'cover' : rawType === 'dedication' ? 'dedication' : 'story';
-  const pageLabel = getDisplayPageNumber(pageType, page.order, safeIndex);
+  const pageLabel = getDisplayPageNumber(pageType, page.order);
   const cacheToken = page.updatedAt || assetUpdatedAt || `${assetIdentifier}-${pageLabel}`;
 
   const renderedImageSrc = page.renderedImage
@@ -1364,7 +1366,6 @@ const buildPagePreviewModel = ({
 
     const resolvedCover = resolveCoverText({
       cover: syntheticCover,
-      bodyFallback: page.text || '',
       readerName,
     });
 
@@ -1868,8 +1869,8 @@ const normaliseAssetPages = (pages) => {
     dedication: -1,
     story: 0,
   };
-  return pages
-    .map((entry) => {
+  const normalizedEntries = pages
+    .map((entry, idx) => {
       const rawType = entry?.pageType;
       const pageType =
         rawType === 'cover' ? 'cover' : rawType === 'dedication' ? 'dedication' : 'story';
@@ -1919,15 +1920,42 @@ const normaliseAssetPages = (pages) => {
           : pageType === 'dedication' && typeof entry?.dedicationPage?.prompt === 'string'
           ? entry.dedicationPage.prompt
           : entry?.text || '';
+      const originalOrder = Number.isFinite(entry?.order)
+        ? Number(entry.order)
+        : null;
+      const bookPageOrder = Number.isFinite(entry?.bookPageOrder)
+        ? Number(entry.bookPageOrder)
+        : null;
+
+      // Get the correct character image based on page type
+      let characterAsset = entry?.character ? { ...entry.character } : null;
+      let characterOriginalAsset = entry?.characterOriginal ? { ...entry.characterOriginal } : null;
+
+      if (pageType === 'cover' && coverPage?.characterImage) {
+        characterAsset = { ...coverPage.characterImage };
+        if (coverPage?.characterImageOriginal) {
+          characterOriginalAsset = { ...coverPage.characterImageOriginal };
+        }
+      } else if (pageType === 'dedication' && dedicationPage?.kidImage) {
+        characterAsset = { ...dedicationPage.kidImage };
+        if (dedicationPage?.generatedImageOriginal) {
+          characterOriginalAsset = { ...dedicationPage.generatedImageOriginal };
+        }
+      }
+
       return {
         ...entry,
+        order: originalOrder,
+        originalOrder,
+        bookPageOrder,
         pageType,
+        pageId: entry?.pageId || null,
         cover,
         coverPage,
         dedicationPage,
         background: entry?.background ? { ...entry.background } : null,
-        character: entry?.character ? { ...entry.character } : null,
-        characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
+        character: characterAsset,
+        characterOriginal: characterOriginalAsset,
         candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
         selectedCandidateIndex: selectedCandidateIndexSource,
         generationId: entry?.generationId || null,
@@ -1944,8 +1972,13 @@ const normaliseAssetPages = (pages) => {
       const priorityDiff =
         (pageTypePriority[a.pageType] || 0) - (pageTypePriority[b.pageType] || 0);
       if (priorityDiff !== 0) return priorityDiff;
-      return (a.order || 0) - (b.order || 0);
+      return (a.originalOrder || 0) - (b.originalOrder || 0);
     });
+
+  return normalizedEntries.map((entry, index) => ({
+    ...entry,
+    order: index + 1,
+  }));
 };
 
 const normaliseIdentifier = (value) => {
@@ -2013,7 +2046,8 @@ const PageThumbnail = React.memo(
       prevProps.assetUpdatedAt === nextProps.assetUpdatedAt &&
       prevProps.assetIdentifier === nextProps.assetIdentifier &&
       prevProps.index === nextProps.index &&
-      prevProps.readerName === nextProps.readerName
+      prevProps.readerName === nextProps.readerName &&
+      prevProps.readerGender === nextProps.readerGender
     );
   }
 );
@@ -2041,8 +2075,7 @@ function Storybooks() {
   const reconnectTimeoutRef = useRef(null);
   const handledJobCompletionsRef = useRef(new Set());
   const [isStreamConnected, setIsStreamConnected] = useState(false);
-  const [activeAsset, setActiveAsset] = useState(null);
-  const [activeAssetPages, setActiveAssetPages] = useState([]);
+  const [activeAssetId, setActiveAssetId] = useState('');
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [regeneratingOrder, setRegeneratingOrder] = useState(null);
   const [isRegeneratingPdf, setIsRegeneratingPdf] = useState(false);
@@ -2050,6 +2083,8 @@ function Storybooks() {
   const [applyingCandidateKey, setApplyingCandidateKey] = useState('');
   const [confirmingAssetId, setConfirmingAssetId] = useState('');
   const preloadRefs = useRef([]);
+  const [assetPagesById, setAssetPagesById] = useState({});
+  const pendingPageOrderRef = useRef(null);
   const hasLoadedInitialDataRef = useRef(false);
 
   const selectedReader = useMemo(
@@ -2061,6 +2096,71 @@ function Storybooks() {
     () => trainings.find((training) => training._id === selectedTrainingId) || null,
     [trainings, selectedTrainingId]
   );
+
+  const activeAsset = useMemo(() => {
+    if (!activeAssetId || !Array.isArray(selectedBook?.pdfAssets)) {
+      return null;
+    }
+
+    const targetId = normaliseIdentifier(activeAssetId);
+    return (
+      selectedBook.pdfAssets.find((asset) => {
+        const assetIdentifier = resolveAssetId(asset);
+        const assetKey = normaliseIdentifier(asset?.key);
+        return assetIdentifier === targetId || assetKey === targetId;
+      }) || null
+    );
+  }, [activeAssetId, selectedBook?.pdfAssets]);
+
+  const activeAssetPages = useMemo(() => {
+    const targetId = activeAssetId ? normaliseIdentifier(activeAssetId) : '';
+    if (targetId && Array.isArray(assetPagesById[targetId])) {
+      return normaliseAssetPages(assetPagesById[targetId]);
+    }
+    return [];
+  }, [activeAssetId, assetPagesById]);
+
+  useEffect(() => {
+    if (!activeAssetPages.length) {
+      setActivePageIndex(0);
+      return;
+    }
+    setActivePageIndex((prev) =>
+      prev >= activeAssetPages.length ? activeAssetPages.length - 1 : Math.max(prev, 0)
+    );
+  }, [activeAssetPages.length]);
+
+  useEffect(() => {
+    if (!activeAssetId) {
+      return;
+    }
+    if (activeAsset) {
+      return;
+    }
+    if (Array.isArray(selectedBook?.pdfAssets) && selectedBook.pdfAssets.length > 0) {
+      pendingPageOrderRef.current = null;
+      setActiveAssetId('');
+    }
+  }, [activeAsset, activeAssetId, selectedBook?.pdfAssets]);
+
+  useEffect(() => {
+    const targetOrder = pendingPageOrderRef.current;
+    if (targetOrder === null || targetOrder === undefined) {
+      return;
+    }
+    if (!activeAsset || !activeAssetPages.length) {
+      return;
+    }
+    const normalisedTarget = normaliseIdentifier(targetOrder);
+    const nextIndex = activeAssetPages.findIndex((page) => {
+      const pageOrder = normaliseIdentifier(page.order);
+      return pageOrder === normalisedTarget;
+    });
+    if (nextIndex !== -1) {
+      setActivePageIndex(nextIndex);
+      pendingPageOrderRef.current = null;
+    }
+  }, [activeAsset, activeAssetPages]);
 
   useEffect(() => {
     const readerGender = selectedReader?.gender || '';
@@ -2145,6 +2245,7 @@ function Storybooks() {
               pages: normaliseAssetPages(asset.pages),
             }))
           : [];
+
         setSelectedBook({
           ...book,
           pdfAssets: normalisedPdfAssets,
@@ -2185,12 +2286,31 @@ function Storybooks() {
         toast.error(`Failed to load book details: ${error.message}`);
         setSelectedBook(null);
         setPages([]);
+        setAssetPagesById({});
       } finally {
         setLoadingBook(false);
       }
     },
     []
   );
+
+  const refreshAssetPages = useCallback(async (bookId, assetIdentifier) => {
+    if (!bookId || !assetIdentifier) return;
+    const normalisedAssetId = normaliseIdentifier(assetIdentifier);
+    try {
+      const response = await bookAPI.getStorybookAssetPages(bookId, assetIdentifier);
+      if (response?.success === false) {
+        return;
+      }
+      const pages = normaliseAssetPages(response?.data?.pages || []);
+      setAssetPagesById((prev) => ({
+        ...prev,
+        [normalisedAssetId]: pages,
+      }));
+    } catch (error) {
+      console.warn('Failed to refresh storybook pages', error);
+    }
+  }, []);
 
 
   const disconnectJobStream = useCallback(() => {
@@ -2239,6 +2359,19 @@ function Storybooks() {
           pdfAssets: nextAssets,
         };
       });
+
+      if (job.pdfAsset) {
+        const assetId = resolveAssetId(job.pdfAsset);
+        if (assetId) {
+          const assetPages = normaliseAssetPages(job.pdfAsset.pages);
+          if (assetPages.length) {
+            setAssetPagesById((prev) => ({
+              ...prev,
+              [assetId]: assetPages,
+            }));
+          }
+        }
+      }
 
       if (selectedBookId) {
         fetchBookDetails(selectedBookId, { preserveTitle: true });
@@ -2419,43 +2552,11 @@ function Storybooks() {
   }, [activeAsset]);
 
   useEffect(() => {
-    setActiveAsset(null);
-    setActiveAssetPages([]);
+    setActiveAssetId('');
     setActivePageIndex(0);
     setRegeneratingOrder(null);
+    setAssetPagesById({});
   }, [selectedBookId]);
-
-  useEffect(() => {
-    if (!activeAsset || !selectedBook?.pdfAssets?.length) return;
-    const updatedAsset =
-      selectedBook.pdfAssets.find(
-        (asset) =>
-          (activeAsset._id && asset._id === activeAsset._id) ||
-          asset.key === activeAsset.key
-      ) || null;
-    if (!updatedAsset) return;
-
-    const updatedTimestamp = updatedAsset.updatedAt
-      ? new Date(updatedAsset.updatedAt).toISOString()
-      : updatedAsset.createdAt
-      ? new Date(updatedAsset.createdAt).toISOString()
-      : null;
-    const currentTimestamp = activeAsset.updatedAt
-      ? new Date(activeAsset.updatedAt).toISOString()
-      : activeAsset.createdAt
-      ? new Date(activeAsset.createdAt).toISOString()
-      : null;
-
-    if (updatedTimestamp && currentTimestamp && updatedTimestamp === currentTimestamp) {
-      return;
-    }
-
-    const snapshot = JSON.parse(JSON.stringify(updatedAsset));
-    setActiveAsset(snapshot);
-    if (Array.isArray(snapshot.pages) && snapshot.pages.length) {
-    setActiveAssetPages(normaliseAssetPages(snapshot.pages));
-    }
-  }, [activeAsset, selectedBook?.pdfAssets]);
 
   const standardAssets = useMemo(() => {
     if (!Array.isArray(selectedBook?.pdfAssets)) return [];
@@ -2687,82 +2788,35 @@ function Storybooks() {
       }
       toast.success(response?.message || 'Storybook generated!');
 
-      setSelectedBook((prev) => {
-        if (!prev) return prev;
-        const newAsset = {
-          ...response.data,
-          variant: resolveAssetVariant(response.data),
-          derivedFromAssetId: response.data?.derivedFromAssetId || null,
-          derivedFromAssetKey: response.data?.derivedFromAssetKey || null,
-          confirmedAt: response.data?.confirmedAt || null,
-          metadata: response.data?.metadata || null,
-          pages: normaliseAssetPages(response.data?.pages),
-        };
-        const updatedAssets = [...(prev.pdfAssets || []), newAsset];
-        return { ...prev, pdfAssets: updatedAssets };
-      });
+      const newAssetId = resolveAssetId(response.data);
+      await fetchBookDetails(selectedBookId, { preserveTitle: true });
+      if (newAssetId) {
+        await refreshAssetPages(selectedBookId, newAssetId);
+      }
     } catch (error) {
       toast.error(`Failed to generate storybook: ${error.message}`);
-  } finally {
-    setIsGenerating(false);
-  }
-};
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const handleOpenAssetViewer = async (asset) => {
     if (!asset) return;
-    const assetSnapshot = JSON.parse(JSON.stringify(asset));
-    assetSnapshot.variant = resolveAssetVariant(assetSnapshot);
-    const orderedPages = normaliseAssetPages(assetSnapshot.pages);
+    const assetIdentifier = resolveAssetId(asset);
+    if (!assetIdentifier) return;
+    const normalisedAssetId = normaliseIdentifier(assetIdentifier);
 
-    if (asset.readerId) {
-      setSelectedUserId(String(asset.readerId));
-    }
+    const assetReaderId = asset.readerId || asset.metadata?.readerId || null;
+    setSelectedUserId(assetReaderId ? String(assetReaderId) : '');
 
-    setActiveAsset(assetSnapshot);
-    setActiveAssetPages(orderedPages);
+    setActiveAssetId(normalisedAssetId);
+    pendingPageOrderRef.current = null;
     setActivePageIndex(0);
 
     if (!selectedBookId) return;
 
-    const assetIdentifier = assetSnapshot._id || assetSnapshot.key;
-    if (!assetIdentifier) return;
-
-    try {
-      const response = await bookAPI.getStorybookAssetPages(selectedBookId, assetIdentifier);
-      if (response?.success === false) {
-        throw new Error(response?.message || 'Failed to load storybook pages');
-      }
-      const remotePages = normaliseAssetPages(response?.data?.pages || []);
-      if (remotePages.length) {
-        setActiveAssetPages(remotePages);
-        setActivePageIndex((prev) =>
-          prev >= remotePages.length ? remotePages.length - 1 : prev
-        );
-        setActiveAsset((prev) => (prev ? { ...prev, pages: remotePages } : prev));
-        setSelectedBook((prev) => {
-          if (!prev) return prev;
-          const nextAssets = Array.isArray(prev.pdfAssets)
-            ? prev.pdfAssets.map((existing) => {
-                const matches =
-                  (assetSnapshot._id && existing._id === assetSnapshot._id) ||
-                  existing.key === assetSnapshot.key;
-                if (!matches) return existing;
-                return {
-                  ...existing,
-                  pages: remotePages,
-                  updatedAt: new Date().toISOString(),
-                };
-              })
-            : prev.pdfAssets;
-          return {
-            ...prev,
-            pdfAssets: nextAssets,
-          };
-        });
-      }
-    } catch (error) {
-      console.warn('Failed to fetch storybook pages', error);
-    }
+    await refreshAssetPages(selectedBookId, assetIdentifier);
+    await fetchBookDetails(selectedBookId, { preserveTitle: true });
   };
 
   const handleConfirmStorybook = async (asset) => {
@@ -2780,54 +2834,15 @@ function Storybooks() {
         throw new Error(response?.message || 'Failed to confirm storybook');
       }
       const payload = response?.data || {};
-      const meta = response?.meta || {};
-      const sourceAssetId = meta?.sourceAssetId ? normaliseIdentifier(meta.sourceAssetId) : assetIdentifier;
-      const enrichedAsset = {
-        ...payload,
-        variant: 'split',
-        derivedFromAssetId: payload?.derivedFromAssetId || null,
-        derivedFromAssetKey: payload?.derivedFromAssetKey || null,
-        confirmedAt: payload?.confirmedAt || null,
-        metadata: payload?.metadata || null,
-        pages: normaliseAssetPages(payload.pages),
-      };
-      const newDerivedId = enrichedAsset.derivedFromAssetId
-        ? normaliseIdentifier(enrichedAsset.derivedFromAssetId)
-        : null;
-      const newDerivedKey = enrichedAsset.derivedFromAssetKey || null;
+      const nextAssetIdentifier = resolveAssetId(payload) || assetIdentifier;
+      if (nextAssetIdentifier) {
+        setActiveAssetId(normaliseIdentifier(nextAssetIdentifier));
+      }
 
-      setSelectedBook((prev) => {
-        if (!prev) return prev;
-        const existingAssets = Array.isArray(prev.pdfAssets) ? [...prev.pdfAssets] : [];
-        const filtered = existingAssets.filter((existing) => {
-          if (resolveAssetVariant(existing) !== 'split') return true;
-          if (newDerivedId && existing.derivedFromAssetId) {
-            return normaliseIdentifier(existing.derivedFromAssetId) !== newDerivedId;
-          }
-          if (newDerivedKey && existing.derivedFromAssetKey) {
-            return existing.derivedFromAssetKey !== newDerivedKey;
-          }
-          if (sourceAssetId && existing.derivedFromAssetId) {
-            return normaliseIdentifier(existing.derivedFromAssetId) !== sourceAssetId;
-          }
-          return true;
-        });
-        filtered.push(enrichedAsset);
-        return {
-          ...prev,
-          pdfAssets: filtered,
-        };
-      });
-
-      setActiveAsset((prev) => {
-        if (!prev) return prev;
-        const prevId = resolveAssetId(prev);
-        const newId = resolveAssetId(enrichedAsset);
-        if (prevId && newId && prevId === newId) {
-          return enrichedAsset;
-        }
-        return prev;
-      });
+      await fetchBookDetails(selectedBookId, { preserveTitle: true });
+      if (nextAssetIdentifier) {
+        await refreshAssetPages(selectedBookId, nextAssetIdentifier);
+      }
 
       toast.success(response?.message || 'Split PDF generated successfully');
     } catch (error) {
@@ -2838,8 +2853,8 @@ function Storybooks() {
   };
 
   const handleCloseAssetViewer = () => {
-    setActiveAsset(null);
-    setActiveAssetPages([]);
+    setActiveAssetId('');
+    pendingPageOrderRef.current = null;
     setActivePageIndex(0);
     setRegeneratingOrder(null);
     setIsRegeneratingPdf(false);
@@ -2860,7 +2875,9 @@ function Storybooks() {
       return;
     }
 
-    const assetIdentifier = activeAsset._id || activeAsset.key || 'asset';
+    const assetIdentifier = activeAssetId
+      ? normaliseIdentifier(activeAssetId)
+      : resolveAssetId(activeAsset) || activeAsset?.key || 'asset';
     const images = [];
 
     // Only preload current page and adjacent pages (prev and next)
@@ -2898,11 +2915,11 @@ function Storybooks() {
         img.src = '';
       });
     };
-  }, [activeAsset, activeAssetPages, activePageIndex]);
+  }, [activeAsset, activeAssetId, activeAssetPages, activePageIndex]);
 
   const handleRegeneratePage = async (order) => {
     if (!activeAsset || !selectedBookId || order === undefined || order === null) return;
-    const assetIdentifier = activeAsset._id || activeAsset.key;
+    const assetIdentifier = resolveAssetId(activeAsset);
     if (!assetIdentifier) {
       toast.error('Missing storybook identifier for regeneration');
       return;
@@ -2933,34 +2950,10 @@ function Storybooks() {
       const payload = response?.data || {};
       const { page: updatedBookPage, pdfAssetPage } = payload;
 
-      if (pdfAssetPage) {
-        setActiveAssetPages((prev) => {
-          const next = Array.isArray(prev) ? [...prev] : [];
-          const existingIndex = next.findIndex((entry) => entry.order === pdfAssetPage.order);
-          if (existingIndex === -1) {
-            next.push(pdfAssetPage);
-          } else {
-            next[existingIndex] = { ...next[existingIndex], ...pdfAssetPage };
-          }
-          return normaliseAssetPages(next);
-        });
-
-        setActiveAsset((prev) => {
-          if (!prev) return prev;
-          const nextPages = normaliseAssetPages(
-            Array.isArray(prev.pages)
-              ? prev.pages.map((entry) =>
-                  entry.order === pdfAssetPage.order ? { ...entry, ...pdfAssetPage } : entry
-                )
-              : [pdfAssetPage]
-          );
-          return {
-            ...prev,
-            pages: nextPages,
-            updatedAt: new Date().toISOString(),
-            variant: prev.variant || resolveAssetVariant(prev),
-          };
-        });
+      if (pdfAssetPage && pdfAssetPage.order !== undefined && pdfAssetPage.order !== null) {
+        pendingPageOrderRef.current = pdfAssetPage.order;
+      } else {
+        pendingPageOrderRef.current = order;
       }
 
       if (updatedBookPage?.characterImage) {
@@ -2979,99 +2972,10 @@ function Storybooks() {
         );
       }
 
-      setSelectedBook((prev) => {
-        if (!prev) return prev;
-        const nextPages = Array.isArray(prev.pages)
-          ? prev.pages.map((page) =>
-              updatedBookPage && page.order === updatedBookPage.order
-                ? { ...page, characterImage: updatedBookPage.characterImage }
-                : page
-            )
-          : prev.pages;
-
-        const nextAssets = Array.isArray(prev.pdfAssets)
-          ? prev.pdfAssets.map((asset) => {
-              const matches =
-                (activeAsset?._id && asset._id === activeAsset._id) ||
-                asset.key === activeAsset?.key;
-              if (!matches) return asset;
-
-              const updatedAsset = {
-                ...asset,
-                updatedAt: new Date().toISOString(),
-              };
-              if (pdfAssetPage) {
-                const assetPages = Array.isArray(asset.pages) ? [...asset.pages] : [];
-                const pageIndex = assetPages.findIndex(
-                  (entry) => entry.order === pdfAssetPage.order
-                );
-                if (pageIndex === -1) {
-                  assetPages.push(pdfAssetPage);
-                } else {
-                  assetPages[pageIndex] = { ...assetPages[pageIndex], ...pdfAssetPage };
-                }
-                updatedAsset.pages = normaliseAssetPages(assetPages);
-              }
-              updatedAsset.variant = resolveAssetVariant(updatedAsset);
-              if (!updatedAsset.derivedFromAssetId && asset.derivedFromAssetId) {
-                updatedAsset.derivedFromAssetId = asset.derivedFromAssetId;
-              }
-              if (!updatedAsset.derivedFromAssetKey && asset.derivedFromAssetKey) {
-                updatedAsset.derivedFromAssetKey = asset.derivedFromAssetKey;
-              }
-              if (!updatedAsset.confirmedAt && asset.confirmedAt) {
-                updatedAsset.confirmedAt = asset.confirmedAt;
-              }
-              if (!updatedAsset.metadata && asset.metadata) {
-                updatedAsset.metadata = asset.metadata;
-              }
-              return updatedAsset;
-            })
-          : prev.pdfAssets;
-
-        const nextCoverPage = payload.coverPage
-          ? { ...(prev.coverPage || {}), ...payload.coverPage }
-          : prev.coverPage;
-        const nextDedicationPage = payload.dedicationPage
-          ? { ...(prev.dedicationPage || {}), ...payload.dedicationPage }
-          : prev.dedicationPage;
-
-        return {
-          ...prev,
-          pages: nextPages,
-          pdfAssets: nextAssets,
-          coverPage: nextCoverPage,
-          dedicationPage: nextDedicationPage,
-        };
-      });
-
-      await fetchBookDetails(selectedBookId, { preserveTitle: true });
-      try {
-        const refreshedPagesResponse = await bookAPI.getStorybookAssetPages(
-          selectedBookId,
-          assetIdentifier
-        );
-        const refreshedPages = normaliseAssetPages(
-          refreshedPagesResponse?.data?.pages || []
-        );
-        if (refreshedPages.length) {
-          setActiveAssetPages(refreshedPages);
-          setActivePageIndex((prev) =>
-            prev >= refreshedPages.length ? refreshedPages.length - 1 : prev
-          );
-          setActiveAsset((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  pages: refreshedPages,
-                  variant: prev.variant || resolveAssetVariant(prev),
-                }
-              : prev
-          );
-        }
-      } catch (fetchError) {
-        console.warn('Failed to refresh storybook pages after regeneration', fetchError);
-      }
+      await Promise.all([
+        fetchBookDetails(selectedBookId, { preserveTitle: true }),
+        refreshAssetPages(selectedBookId, assetIdentifier),
+      ]);
       toast.success('Page regenerated. Regenerate the PDF to export the latest changes.');
     } catch (error) {
       toast.error(`Failed to regenerate page: ${error.message}`);
@@ -3086,7 +2990,7 @@ function Storybooks() {
       return;
     }
 
-    const assetIdentifier = activeAsset._id || activeAsset.key;
+    const assetIdentifier = resolveAssetId(activeAsset);
     if (!assetIdentifier) {
       toast.error('Missing storybook identifier for PDF regeneration');
       return;
@@ -3123,54 +3027,18 @@ function Storybooks() {
         throw new Error(response?.message || 'Failed to regenerate PDF');
       }
       const payload = response?.data || {};
-      const normalisedPages = normaliseAssetPages(payload.pages || []);
+      const nextAssetIdentifier = resolveAssetId(payload) || assetIdentifier;
+      if (nextAssetIdentifier) {
+        setActiveAssetId(normaliseIdentifier(nextAssetIdentifier));
+      }
+      pendingPageOrderRef.current = null;
 
-      setActiveAsset((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          ...payload,
-          variant: prev.variant || resolveAssetVariant(prev),
-          derivedFromAssetId:
-            payload?.derivedFromAssetId ?? prev.derivedFromAssetId ?? null,
-          derivedFromAssetKey:
-            payload?.derivedFromAssetKey ?? prev.derivedFromAssetKey ?? null,
-          confirmedAt: payload?.confirmedAt ?? prev.confirmedAt ?? null,
-          metadata: payload?.metadata ?? prev.metadata ?? null,
-          pages: normalisedPages,
-          updatedAt: payload.updatedAt || new Date().toISOString(),
-        };
-      });
-      setActiveAssetPages(normalisedPages);
-
-      setSelectedBook((prev) => {
-        if (!prev) return prev;
-        const updatedAssets = Array.isArray(prev.pdfAssets)
-          ? prev.pdfAssets.map((asset) => {
-              const matches =
-                (activeAsset?._id && asset._id === activeAsset._id) ||
-                asset.key === activeAsset?.key;
-              if (!matches) return asset;
-              const variant = resolveAssetVariant({ ...asset, ...payload });
-              return {
-                ...asset,
-                ...payload,
-                 variant,
-                 derivedFromAssetId:
-                   payload?.derivedFromAssetId ?? asset.derivedFromAssetId ?? null,
-                 derivedFromAssetKey:
-                   payload?.derivedFromAssetKey ?? asset.derivedFromAssetKey ?? null,
-                 confirmedAt: payload?.confirmedAt ?? asset.confirmedAt ?? null,
-                 metadata: payload?.metadata ?? asset.metadata ?? null,
-                pages: normalisedPages,
-              };
-            })
-          : prev.pdfAssets;
-        return {
-          ...prev,
-          pdfAssets: updatedAssets,
-        };
-      });
+      await Promise.all([
+        fetchBookDetails(selectedBookId, { preserveTitle: true }),
+        nextAssetIdentifier
+          ? refreshAssetPages(selectedBookId, nextAssetIdentifier)
+          : Promise.resolve(),
+      ]);
 
       toast.success('Regenerated PDF with the latest imagery');
     } catch (error) {
@@ -3180,106 +3048,9 @@ function Storybooks() {
     }
   };
 
-  const handleDownloadPreviewAsPdf = async () => {
-    if (!activeAssetPages.length) {
-      toast.error('No pages to download');
-      return;
-    }
-
-    setIsDownloadingPdf(true);
-    const toastId = toast.loading('Generating PDF from preview...');
-
-    try {
-      // Create PDF document
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'pt',
-        format: [PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT],
-      });
-
-      const originalIndex = activePageIndex;
-
-      // Process each page by navigating and capturing
-      for (let i = 0; i < activeAssetPages.length; i++) {
-        toast.loading(`Processing page ${i + 1} of ${activeAssetPages.length}...`, { id: toastId });
-
-        // Navigate to the page
-        setActivePageIndex(i);
-
-        // Wait for React to render the page
-        await new Promise(resolve => setTimeout(resolve, 800));
-
-        try {
-          // Find the SVG element in the preview
-          const previewContainer = document.querySelector('.preview-container');
-          const svgElement = previewContainer?.querySelector('svg');
-
-          if (!svgElement) {
-            console.warn(`No SVG found for page ${i + 1}`);
-            continue;
-          }
-
-          // Get the SVG data
-          const svgData = new XMLSerializer().serializeToString(svgElement);
-          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-          const svgUrl = URL.createObjectURL(svgBlob);
-
-          // Load SVG as image
-          const img = await new Promise((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => resolve(image);
-            image.onerror = reject;
-            image.src = svgUrl;
-          });
-
-          // Create canvas and draw the image
-          const canvas = document.createElement('canvas');
-          canvas.width = PDF_PAGE_WIDTH;
-          canvas.height = PDF_PAGE_HEIGHT;
-          const ctx = canvas.getContext('2d');
-
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT);
-          ctx.drawImage(img, 0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT);
-
-          // Clean up
-          URL.revokeObjectURL(svgUrl);
-
-          // Add page to PDF
-          if (i > 0) {
-            pdf.addPage();
-          }
-
-          const imgData = canvas.toDataURL('image/jpeg', 0.95);
-          pdf.addImage(imgData, 'JPEG', 0, 0, PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT);
-
-          console.log(`✓ Added page ${i + 1} to PDF`);
-
-        } catch (pageError) {
-          console.error(`Error processing page ${i + 1}:`, pageError);
-          toast.error(`Failed to process page ${i + 1}, skipping...`, { id: toastId });
-        }
-      }
-
-      // Restore original page
-      setActivePageIndex(originalIndex);
-
-      // Download the PDF
-      const filename = `${activeAsset?.title || 'storybook'}-preview.pdf`;
-      pdf.save(filename);
-
-      toast.success('PDF downloaded successfully!', { id: toastId });
-    } catch (error) {
-      console.error('Failed to generate PDF:', error);
-      toast.error(`Failed to generate PDF: ${error.message}`, { id: toastId });
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  };
-
   const handleApplyCandidate = async (order, candidateIndex) => {
     if (!activeAsset || !selectedBookId || order === undefined || order === null) return;
-    const assetIdentifier = activeAsset._id || activeAsset.key;
+    const assetIdentifier = resolveAssetId(activeAsset);
     if (!assetIdentifier) {
       toast.error('Missing storybook identifier for candidate selection');
       return;
@@ -3287,6 +3058,15 @@ function Storybooks() {
 
     const selectionKey = `${order}-${candidateIndex}`;
     setApplyingCandidateKey(selectionKey);
+
+    // Debug logging for candidate selection
+    console.log('[Candidate Selection]', {
+      order,
+      candidateIndex,
+      assetIdentifier,
+      bookId: selectedBookId,
+      selectionKey
+    });
 
     try {
       const response = await bookAPI.selectStorybookPageCandidate(
@@ -3299,106 +3079,75 @@ function Storybooks() {
         throw new Error(response?.message || 'Candidate selection failed');
       }
       const payload = response?.data || {};
-      if (payload.pdfAssetPage) {
-        const [normalisedPage] = normaliseAssetPages([payload.pdfAssetPage]);
-
-        setActiveAssetPages((prev) => {
-          const next = Array.isArray(prev)
-            ? prev.map((page) =>
-                page.order === normalisedPage.order ? { ...page, ...normalisedPage } : page
-              )
-            : [normalisedPage];
-          return normaliseAssetPages(next);
-        });
-
-        setActiveAsset((prev) => {
-          if (!prev) return prev;
-          const nextPages = normaliseAssetPages(
-            Array.isArray(prev.pages)
-              ? prev.pages.map((page) =>
-                  page.order === normalisedPage.order ? { ...page, ...normalisedPage } : page
-                )
-              : [normalisedPage]
-          );
-          return {
-            ...prev,
-            pages: nextPages,
-            updatedAt: payload.pdfAssetPage.updatedAt || new Date().toISOString(),
-          };
-        });
-
-        setSelectedBook((prev) => {
-          if (!prev) return prev;
-          const updatedBookPages = Array.isArray(prev.pages)
-            ? prev.pages.map((page) =>
-                page.order === (payload.page?.order || order)
-                  ? {
-                      ...page,
-                      characterImage: payload.page?.characterImage || page.characterImage,
-                      characterImageOriginal:
-                        payload.page?.characterImageOriginal || page.characterImageOriginal,
-                    }
-                  : page
-              )
-            : prev.pages;
-          const updatedAssets = Array.isArray(prev.pdfAssets)
-            ? prev.pdfAssets.map((asset) => {
-                const matches =
-                  (activeAsset?._id && asset._id === activeAsset._id) ||
-                  asset.key === activeAsset?.key;
-                if (!matches) return asset;
-                const nextPages = normaliseAssetPages(
-                  Array.isArray(asset.pages)
-                    ? asset.pages.map((page) =>
-                        page.order === normalisedPage.order ? { ...page, ...normalisedPage } : page
-                      )
-                    : [normalisedPage]
-                );
-                return {
-                  ...asset,
-                  pages: nextPages,
-                  updatedAt:
-                    payload.pdfAssetPage.updatedAt || asset.updatedAt || new Date().toISOString(),
-                };
-              })
-            : prev.pdfAssets;
-          const updatedCoverPage = payload.coverPage
-            ? { ...(prev.coverPage || {}), ...payload.coverPage }
-            : prev.coverPage;
-          const updatedDedicationPage = payload.dedicationPage
-            ? { ...(prev.dedicationPage || {}), ...payload.dedicationPage }
-            : prev.dedicationPage;
-          return {
-            ...prev,
-            pdfAssets: updatedAssets,
-            pages: updatedBookPages,
-            coverPage: updatedCoverPage,
-            dedicationPage: updatedDedicationPage,
-          };
-        });
-
-        if (payload.page?.characterImage) {
-          setPages((prev) =>
-            prev.map((page) =>
-              page.order === (payload.page.order || order)
-                ? {
-                    ...page,
-                    characterUrl: payload.page.characterImage?.url || page.characterUrl,
-                    characterPreview: '',
-                    characterFile: null,
-                    useCharacter: true,
-                  }
-                : page
-            )
-          );
-        }
-
-        if ((payload.coverPage || payload.dedicationPage) && selectedBookId) {
-          await fetchBookDetails(selectedBookId, { preserveTitle: true });
-        }
-
-        toast.success('Applied the selected candidate image');
+      const [normalisedPage] = payload.pdfAssetPage
+        ? normaliseAssetPages([payload.pdfAssetPage])
+        : [null];
+      const targetOrder =
+        (payload.pdfAssetPage && payload.pdfAssetPage.order !== undefined
+          ? payload.pdfAssetPage.order
+          : null) ??
+        (payload.page && payload.page.order !== undefined ? payload.page.order : null) ??
+        order;
+      if (targetOrder !== undefined && targetOrder !== null) {
+        pendingPageOrderRef.current = targetOrder;
       }
+
+      if (payload.page?.characterImage) {
+        setPages((prev) =>
+          prev.map((page) =>
+            page.order === (payload.page.order || order)
+              ? {
+                  ...page,
+                  characterUrl: payload.page.characterImage?.url || page.characterUrl,
+                  characterPreview: '',
+                  characterFile: null,
+                  useCharacter: true,
+                }
+              : page
+          )
+        );
+      }
+
+      if (normalisedPage) {
+        const normalisedAssetId = normaliseIdentifier(assetIdentifier);
+        setAssetPagesById((prev) => {
+          const existingPages = Array.isArray(prev[normalisedAssetId])
+            ? prev[normalisedAssetId].slice()
+            : [];
+
+          // For cover and dedication pages, match by page type
+          // For regular pages, match by order with tolerance for floating point
+          const pageIndex = existingPages.findIndex((entry) => {
+            if (normalisedPage.pageType === 'cover' && entry.pageType === 'cover') {
+              return true;
+            }
+            if (normalisedPage.pageType === 'dedication' && entry.pageType === 'dedication') {
+              return true;
+            }
+            // For regular pages, compare orders with tolerance
+            const orderMatch = Math.abs((entry.order || 0) - (normalisedPage.order || 0)) < 0.001;
+            return orderMatch;
+          });
+
+          if (pageIndex === -1) {
+            existingPages.push(normalisedPage);
+          } else {
+            existingPages[pageIndex] = {
+              ...existingPages[pageIndex],
+              ...normalisedPage,
+            };
+          }
+          return {
+            ...prev,
+            [normalisedAssetId]: normaliseAssetPages(existingPages),
+          };
+        });
+      }
+
+      await fetchBookDetails(selectedBookId, { preserveTitle: true });
+      await refreshAssetPages(selectedBookId, assetIdentifier);
+
+      toast.success('Applied the selected candidate image');
     } catch (error) {
       toast.error(`Failed to apply candidate: ${error.message}`);
     } finally {
@@ -3409,32 +3158,20 @@ function Storybooks() {
   const renderAssetViewer = useCallback(() => {
     if (!activeAsset) return null;
 
+    const targetAssetId = activeAssetId ? normaliseIdentifier(activeAssetId) : '';
     const hasPages = Array.isArray(activeAssetPages) && activeAssetPages.length > 0;
+    const isLoadingPages = Boolean(targetAssetId && !Array.isArray(assetPagesById[targetAssetId]));
     const safeIndex = hasPages
       ? activePageIndex >= activeAssetPages.length
         ? activeAssetPages.length - 1
         : Math.max(0, activePageIndex)
       : 0;
     const currentPage = hasPages ? activeAssetPages[safeIndex] || null : null;
-    const assetIdentifier = activeAsset?._id || activeAsset?.key || 'storybook';
-    const previewModel = currentPage
-      ? buildPagePreviewModel({
-          page: currentPage,
-          index: safeIndex,
-          assetIdentifier,
-          assetUpdatedAt: activeAsset?.updatedAt,
-          readerName: selectedReader?.name || '',
-          readerGender: selectedReader?.gender || '',
-        })
-      : null;
+    const assetIdentifier = targetAssetId || resolveAssetId(activeAsset) || activeAsset?.key || 'storybook';
     const canNavigatePrev = hasPages && safeIndex > 0;
     const canNavigateNext = hasPages && safeIndex < activeAssetPages.length - 1;
     const isCurrentPageRegenerating =
       currentPage?.order !== undefined && regeneratingOrder === currentPage.order;
-    const pageLabel =
-      previewModel?.pageLabel ??
-      getDisplayPageNumber(currentPage?.pageType, currentPage?.order, safeIndex);
-    const cacheToken = previewModel?.cacheToken || assetIdentifier;
     const pageRole = currentPage?.pageType || 'story';
     const currentPageType = pageRole;
     const isRegenerablePage = ['story', 'cover', 'dedication'].includes(pageRole);
@@ -3451,20 +3188,42 @@ function Storybooks() {
     const assetReaderIdString = activeAsset?.readerId
       ? String(activeAsset.readerId)
       : '';
-    const selectedReaderIdString = selectedReader?._id || '';
-    const readerLookupId = assetReaderIdString || selectedReaderIdString;
+    const metadataReaderIdString = activeAsset?.metadata?.readerId
+      ? String(activeAsset.metadata.readerId)
+      : '';
+    const readerLookupId = assetReaderIdString || metadataReaderIdString;
     const readerProfile = readerLookupId
       ? users.find((user) => user._id === readerLookupId)
       : null;
-    const resolvedReaderName =
-      activeAsset?.readerName ||
-      readerProfile?.name ||
-      selectedReader?.name ||
-      '';
-    const resolvedReaderEmail = readerProfile?.email || selectedReader?.email || '';
     const resolvedReaderGender = normaliseGenderValue(
-      selectedReader?.gender || activeAsset?.readerGender || readerProfile?.gender || ''
+      currentPage?.readerGender ||
+        activeAsset?.readerGender ||
+        (activeAsset?.metadata?.readerGender || activeAsset?.metadata?.gender) ||
+        readerProfile?.gender ||
+        ''
     );
+    const resolvedReaderName =
+      (currentPage?.childName && currentPage.childName.trim()) ||
+      (activeAsset?.readerName && activeAsset.readerName.trim()) ||
+      (activeAsset?.metadata?.readerName && String(activeAsset.metadata.readerName).trim()) ||
+      (readerProfile?.name && readerProfile.name.trim()) ||
+      '';
+    const resolvedReaderEmail = readerProfile?.email || '';
+
+    const previewModel = currentPage
+      ? buildPagePreviewModel({
+          page: currentPage,
+          index: safeIndex,
+          assetIdentifier,
+          assetUpdatedAt: activeAsset?.updatedAt,
+          readerName: resolvedReaderName,
+          readerGender: resolvedReaderGender,
+        })
+      : null;
+    const pageLabel =
+      previewModel?.pageLabel ??
+      getDisplayPageNumber(currentPage?.pageType, currentPage?.order);
+    const cacheToken = previewModel?.cacheToken || assetIdentifier;
     const readerGenderLabel = resolvedReaderGender
       ? resolvedReaderGender.charAt(0).toUpperCase() + resolvedReaderGender.slice(1)
       : '';
@@ -3475,34 +3234,34 @@ function Storybooks() {
 
     if (currentPage) {
       if (currentPageType === 'cover') {
-        const coverSource = selectedBook?.coverPage || {};
         const coverSnapshot = currentPage.coverPage || {};
+        const coverSource = selectedBook?.coverPage || {};
         promptNeutral =
-          normalisePromptText(coverSource.characterPrompt) ||
           normalisePromptText(coverSnapshot.characterPrompt) ||
+          normalisePromptText(coverSource.characterPrompt) ||
           '';
         promptMale =
-          normalisePromptText(coverSource.characterPromptMale) ||
           normalisePromptText(coverSnapshot.characterPromptMale) ||
+          normalisePromptText(coverSource.characterPromptMale) ||
           '';
         promptFemale =
-          normalisePromptText(coverSource.characterPromptFemale) ||
           normalisePromptText(coverSnapshot.characterPromptFemale) ||
+          normalisePromptText(coverSource.characterPromptFemale) ||
           '';
       } else if (currentPageType === 'dedication') {
-        const dedicationSource = selectedBook?.dedicationPage || {};
         const dedicationSnapshot = currentPage.dedicationPage || {};
+        const dedicationSource = selectedBook?.dedicationPage || {};
         promptNeutral =
-          normalisePromptText(dedicationSource.characterPrompt) ||
           normalisePromptText(dedicationSnapshot.characterPrompt) ||
+          normalisePromptText(dedicationSource.characterPrompt) ||
           '';
         promptMale =
-          normalisePromptText(dedicationSource.characterPromptMale) ||
           normalisePromptText(dedicationSnapshot.characterPromptMale) ||
+          normalisePromptText(dedicationSource.characterPromptMale) ||
           '';
         promptFemale =
-          normalisePromptText(dedicationSource.characterPromptFemale) ||
           normalisePromptText(dedicationSnapshot.characterPromptFemale) ||
+          normalisePromptText(dedicationSource.characterPromptFemale) ||
           '';
       } else {
         const sourcePage =
@@ -3630,28 +3389,6 @@ function Storybooks() {
                   )}
                 </Button>
               ) : null}
-              {hasPages ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1 hidden md:flex"
-                  onClick={handleDownloadPreviewAsPdf}
-                  disabled={isDownloadingPdf}
-                >
-                  {isDownloadingPdf ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="hidden lg:inline">Downloading…</span>
-                    </>
-                  ) : (
-                    <>
-                      <FileImage className="h-4 w-4" />
-                      <span className="hidden lg:inline">Download as PDF</span>
-                    </>
-                  )}
-                </Button>
-              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -3681,8 +3418,8 @@ function Storybooks() {
                         onClick={() => handlePageIndexChange(idx)}
                         assetUpdatedAt={activeAsset.updatedAt}
                         assetIdentifier={assetIdentifier}
-                        readerName={selectedReader?.name || ''}
-                        readerGender={selectedReader?.gender || ''}
+                        readerName={resolvedReaderName}
+                        readerGender={resolvedReaderGender}
                       />
                     ))}
                   </div>
@@ -3806,7 +3543,7 @@ function Storybooks() {
                           </div>
                         </div>
                         <div>
-                          <p className="text-xs font-medium text-foreground/55">Neutral fallback</p>
+                          <p className="text-xs font-medium text-foreground/55">Neutral prompt</p>
                           <p className="mt-1 whitespace-pre-line break-words text-foreground/75">
                             {promptNeutral || '—'}
                           </p>
@@ -3830,12 +3567,9 @@ function Storybooks() {
                           const candidateUrl = resolveAssetUrl(candidate);
                           const cacheKey = `${cacheToken}-candidate-${optionNumber}`;
                           const orderToken =
-                            currentPage?.order ??
-                            (currentPage?.pageType === 'cover'
-                              ? 'cover'
-                              : currentPage?.pageType === 'dedication'
-                              ? 'dedication'
-                              : pageLabel);
+                            currentPage?.order !== undefined && currentPage?.order !== null
+                              ? currentPage.order
+                              : optionNumber;
                           const candidateKey = `${orderToken}-${optionNumber}`;
                           const isSelected =
                             currentPage.selectedCandidateIndex === optionNumber;
@@ -3928,8 +3662,17 @@ function Storybooks() {
               </div>
             ) : (
               <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-2xl border border-border/60 bg-background/70 p-8 text-center text-sm text-foreground/60">
-                <ImageOff className="h-8 w-8 text-foreground/40" />
-                <p>Generate a storybook to preview its pages here.</p>
+                {isLoadingPages ? (
+                  <>
+                    <Loader2 className="h-8 w-8 animate-spin text-foreground/40" />
+                    <p>Loading latest pages…</p>
+                  </>
+                ) : (
+                  <>
+                    <ImageOff className="h-8 w-8 text-foreground/40" />
+                    <p>Generate a storybook to preview its pages here.</p>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -3938,15 +3681,14 @@ function Storybooks() {
     );
   }, [
     activeAsset,
+    activeAssetId,
     activeAssetPages,
     activePageIndex,
+    assetPagesById,
     regeneratingOrder,
     isRegeneratingPdf,
     applyingCandidateKey,
     selectedBook,
-    selectedReader?._id,
-    selectedReader?.name,
-    selectedReader?.gender,
     users,
     handleRegeneratePage,
     handleRegeneratePdf,
@@ -4252,8 +3994,7 @@ function Storybooks() {
                                 const meta = getPageStatusMeta(page.status);
                                 const displayNumber = getDisplayPageNumber(
                                   page.pageType,
-                                  page.order,
-                                  pageIndex
+                                  page.order
                                 );
                                 const labelSuffix =
                                   page.pageType === 'cover'
