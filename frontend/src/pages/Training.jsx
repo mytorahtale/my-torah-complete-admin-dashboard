@@ -116,6 +116,7 @@ function Training() {
     total: 0,
     byStatus: {},
   });
+  const [logsState, setLogsState] = useState({});
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -245,6 +246,45 @@ function Training() {
       trainingUserFilter,
     ]
   );
+
+  const handleLoadLogs = useCallback(async (trainingId) => {
+    if (!trainingId) return;
+    setLogsState((previous) => ({
+      ...previous,
+      [trainingId]: {
+        ...(previous[trainingId] || {}),
+        loading: true,
+        error: null,
+      },
+    }));
+    try {
+      const response = await trainingAPI.getLogs(trainingId, { order: 'desc' });
+      const logs = Array.isArray(response?.logs) ? response.logs : [];
+      setLogsState((previous) => ({
+        ...previous,
+        [trainingId]: {
+          ...(previous[trainingId] || {}),
+          loading: false,
+          error: null,
+          logs,
+          count: typeof response?.count === 'number' ? response.count : logs.length,
+          lastFetched: Date.now(),
+          logsUrl: typeof response?.logsUrl === 'string' ? response.logsUrl : null,
+        },
+      }));
+    } catch (error) {
+      console.error('Failed to load training logs', error);
+      setLogsState((previous) => ({
+        ...previous,
+        [trainingId]: {
+          ...(previous[trainingId] || {}),
+          loading: false,
+          error: error.message || 'Failed to load logs',
+        },
+      }));
+      toast.error(`Failed to load logs: ${error.message}`);
+    }
+  }, []);
 
   const shouldSkipNextFetchRef = useRef(false);
 
@@ -970,12 +1010,19 @@ function Training() {
               }
             }
             const attemptsLabel = `${training.attempts ?? 0}/${MAX_TRAINING_ATTEMPTS}`;
-            const recentLogs = Array.isArray(training.logs) ? training.logs : [];
             const datasetCount =
               training.imageAssetCount ??
               training.imageUrlCount ??
               (training.imageAssets?.length || training.imageUrls?.length || 0);
             const showCancel = ['queued', 'starting', 'processing'].includes(training.status);
+            const trainingLogState = logsState[training._id] || {};
+            const trainingLogs = Array.isArray(trainingLogState.logs) ? trainingLogState.logs : [];
+            const hasTrainingLogs = trainingLogs.length > 0;
+            const trainingLogsCount =
+              typeof trainingLogState.count === 'number'
+                ? trainingLogState.count
+                : trainingLogs.length;
+            const trainingLogsUrl = trainingLogState.logsUrl;
 
             return (
               <Card key={training._id} className="flex flex-col justify-between">
@@ -1038,11 +1085,35 @@ function Training() {
                         {completedAt ? <span>Completed {completedAt.toLocaleString()}</span> : null}
                       </div>
                     </div>
-                    <div className="rounded-lg border border-border/60 bg-card/70 p-3">
-                      <p className="text-xs uppercase tracking-[0.25em] text-foreground/45">Logs</p>
-                      {recentLogs.length > 0 ? (
-                        <div className="mt-2 max-h-44 space-y-1 overflow-y-auto pr-1 font-mono text-[11px] text-foreground/65">
-                          {recentLogs.map((log, index) => (
+                    <div className="rounded-lg border border-border/60 bg-card/70 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs uppercase tracking-[0.25em] text-foreground/45">Logs</p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-[11px]"
+                          onClick={() => handleLoadLogs(training._id)}
+                          disabled={trainingLogState.loading}
+                        >
+                          {trainingLogState.loading ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Loading…
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              {hasTrainingLogs ? 'Refresh logs' : 'Load logs'}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      {trainingLogState.error ? (
+                        <p className="text-xs text-red-400">{trainingLogState.error}</p>
+                      ) : hasTrainingLogs ? (
+                        <div className="max-h-44 space-y-1 overflow-y-auto pr-1 font-mono text-[11px] text-foreground/65">
+                          {trainingLogs.map((log, index) => (
                             <div key={`${log.timestamp || index}-${log.message}`}>
                               <span className="text-foreground/40">
                                 {formatTimestamp(log.timestamp)} ·
@@ -1052,8 +1123,19 @@ function Training() {
                           ))}
                         </div>
                       ) : (
-                        <p className="mt-2 text-xs text-foreground/50">Waiting for training logs…</p>
+                        <p className="text-xs text-foreground/50">
+                          Logs load on demand. Click &ldquo;Load logs&rdquo; to fetch the latest entries.
+                        </p>
                       )}
+                      {hasTrainingLogs ? (
+                        <p className="text-[11px] text-foreground/45">
+                          Showing {trainingLogs.length}
+                          {trainingLogsCount > trainingLogs.length ? ` of ${trainingLogsCount}` : ''} entries{' '}
+                          {trainingLogState.lastFetched
+                            ? `· Updated ${formatTimestamp(trainingLogState.lastFetched)}`
+                            : ''}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1078,17 +1160,17 @@ function Training() {
                       {training.error}
                     </p>
                   )}
-                  {training.logsUrl && (
+                  {trainingLogsUrl ? (
                     <a
-                      href={training.logsUrl}
+                      href={trainingLogsUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex w-fit items-center gap-2 text-xs text-accent hover:text-accent/80"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                      View training logs
+                      Open raw logs
                     </a>
-                  )}
+                  ) : null}
                   {training.imageAssets?.length > 0 ? (
                     <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-foreground/50">

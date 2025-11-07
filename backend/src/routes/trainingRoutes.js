@@ -48,6 +48,12 @@ router.get('/', trainingController.getAllTrainings);
 router.get('/stream/live', trainingController.streamTrainings);
 
 /**
+ * @route   GET /api/trainings/:id/logs
+ * @desc    Get training logs by ID
+ * @access  Public
+ */
+router.get('/:id/logs', trainingController.getTrainingLogs);
+/**
  * @route   GET /api/trainings/:id
  * @desc    Get training by ID
  * @access  Public

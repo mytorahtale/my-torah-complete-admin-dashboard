@@ -449,7 +449,7 @@ function Books() {
       try {
         latestLoadRequestRef.current = bookId;
         setLoadingBookDetailId(bookId);
-        const response = await bookAPI.getById(bookId);
+        const response = await bookAPI.getForEdit(bookId);
         if (response?.success === false || !response?.data) {
           throw new Error(response?.message || 'Failed to load book details');
         }
@@ -1392,7 +1392,7 @@ const handleRemovePageImage = (index) => {
 
     try {
       if (formMode === 'edit' && editingBook?._id) {
-        await bookAPI.update(editingBook._id, formData);
+        await bookAPI.updateForEdit(editingBook._id, formData);
         toast.success('Book updated');
       } else {
         await bookAPI.create(formData);

@@ -31,6 +31,7 @@ api.interceptors.response.use(
 export const bookAPI = {
   getAll: (params) => api.get('/books', { params }),
   getById: (id) => api.get(`/books/${id}`),
+  getForEdit: (id) => api.get(`/books/${id}/editable`),
   create: (data) => {
     if (data instanceof FormData) {
       return api.post('/books', data, {
@@ -46,6 +47,14 @@ export const bookAPI = {
       });
     }
     return api.put(`/books/${id}`, data);
+  },
+  updateForEdit: (id, data) => {
+    if (data instanceof FormData) {
+      return api.put(`/books/${id}/editable`, data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    }
+    return api.put(`/books/${id}/editable`, data);
   },
   delete: (id) => api.delete(`/books/${id}`),
   updateStatus: (id, status) => api.patch(`/books/${id}/status`, { status }),
@@ -104,6 +113,7 @@ export const userAPI = {
 export const trainingAPI = {
   getAll: (params) => api.get('/trainings', { params }),
   getById: (id) => api.get(`/trainings/${id}`),
+  getLogs: (id, params) => api.get(`/trainings/${id}/logs`, { params }),
   create: (data) => {
     if (data instanceof FormData) {
       return api.post('/trainings', data, {

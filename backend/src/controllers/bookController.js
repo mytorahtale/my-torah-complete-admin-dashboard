@@ -772,6 +772,27 @@ const toPositiveInteger = (value, fallback) => {
 
 const VALID_BOOK_SORT_FIELDS = new Set(['createdAt', 'updatedAt', 'name', 'status']);
 
+const buildEditableBookResponse = (book) => {
+  if (!book) return null;
+
+  return {
+    _id: book._id,
+    name: safeText(book.name),
+    description: safeText(book.description),
+    gender: book.gender || 'both',
+    status: book.status || 'active',
+    slug: safeText(book.slug),
+    coverImage: clonePlainObject(book.coverImage),
+    pages: Array.isArray(book.pages)
+      ? book.pages.map((page) => clonePlainObject(page) || null).filter(Boolean)
+      : [],
+    coverPage: clonePlainObject(book.coverPage),
+    dedicationPage: clonePlainObject(book.dedicationPage),
+    createdAt: book.createdAt,
+    updatedAt: book.updatedAt,
+  };
+};
+
 exports.getAllBooks = async (req, res) => {
   try {
     const {
@@ -993,6 +1014,37 @@ exports.getBookById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch book',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @route GET /api/books/:id/editable
+ */
+exports.getBookForEdit = async (req, res) => {
+  try {
+    const book = await Book.findById(req.params.id);
+
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        message: 'Book not found',
+      });
+    }
+
+    const hydratedBook = await hydrateBookDocument(book);
+    const payload = buildEditableBookResponse(hydratedBook);
+
+    res.status(200).json({
+      success: true,
+      data: payload,
+    });
+  } catch (error) {
+    console.error('Error fetching editable book:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch editable book',
       error: error.message,
     });
   }
@@ -1652,10 +1704,16 @@ exports.updateBook = async (req, res) => {
 
     await cleanupKeys(keysToDelete);
 
+    let responseData = updatedBook;
+    if (req.returnEditablePayload) {
+      const hydrated = await hydrateBookDocument(updatedBook);
+      responseData = buildEditableBookResponse(hydrated);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Book updated successfully',
-      data: updatedBook,
+      data: responseData,
     });
   } catch (error) {
     console.error('Error updating book:', error);

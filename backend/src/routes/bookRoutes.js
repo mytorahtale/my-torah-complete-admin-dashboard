@@ -47,6 +47,11 @@ const storybookUpload = multer({
 
 const storybookFields = storybookUpload.fields([{ name: 'characterImages', maxCount: 100 }]);
 
+const markEditableResponse = (req, res, next) => {
+  req.returnEditablePayload = true;
+  next();
+};
+
 router.get('/', bookController.getAllBooks);
 router.post('/cover-preview', coverPreviewFields, bookController.generateCoverPreview);
 router.post('/dedication-preview', dedicationPreviewFields, bookController.generateDedicationPreview);
@@ -67,7 +72,15 @@ router.post(
   '/:id/storybooks/:assetId/pages/:pageOrder/select',
   bookController.selectStorybookPageCandidate
 );
+router.get('/:id/editable', bookController.getBookForEdit);
 router.get('/:id', bookController.getBookById);
+router.put(
+  '/:id/editable',
+  uploadFields,
+  markEditableResponse,
+  validateBookUpdate,
+  bookController.updateBook
+);
 router.post('/', uploadFields, validateBookCreate, bookController.createBook);
 router.put('/:id', uploadFields, validateBookUpdate, bookController.updateBook);
 router.delete('/:id', bookController.deleteBook);

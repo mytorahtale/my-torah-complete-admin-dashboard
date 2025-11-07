@@ -209,7 +209,7 @@ exports.getAllTrainings = async (req, res) => {
     if (isMinimal) {
       query
         .select(
-          'status progress attempts modelName modelVersion logsUrl trainingConfig error createdAt updatedAt startedAt completedAt imageAssets imageUrls logs userId'
+          'status progress attempts modelName modelVersion trainingConfig error createdAt updatedAt startedAt completedAt imageAssets imageUrls userId'
         )
         .lean({ virtuals: false });
     }
@@ -223,14 +223,11 @@ exports.getAllTrainings = async (req, res) => {
     if (isMinimal) {
       trainings = trainings.map((training) => {
         const plain = { ...training };
-        const logsArray = Array.isArray(plain.logs) ? plain.logs : [];
         const imageAssets = Array.isArray(plain.imageAssets) ? plain.imageAssets : [];
         const imageUrls = Array.isArray(plain.imageUrls) ? plain.imageUrls : [];
 
         return {
           ...plain,
-          logs: logsArray.slice(-6).reverse(),
-          logsCount: logsArray.length,
           imageAssets: imageAssets.slice(0, 12),
           imageAssetCount: imageAssets.length,
           imageUrls: imageUrls.slice(0, 12),
@@ -319,6 +316,64 @@ exports.getTrainingById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch training',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Fetch logs for a specific training job
+ * @route GET /api/trainings/:id/logs
+ */
+exports.getTrainingLogs = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid training ID provided',
+      });
+    }
+
+    const rawLimit = Number(req.query.limit);
+    const limit = toPositiveInteger(rawLimit, 0);
+    const orderInput = typeof req.query.order === 'string' ? req.query.order.toLowerCase() : 'desc';
+    const order = orderInput === 'asc' ? 'asc' : 'desc';
+
+    const training = await Training.findById(id).select('logs logsUrl modelName status userId');
+    if (!training) {
+      return res.status(404).json({
+        success: false,
+        message: 'Training not found',
+      });
+    }
+
+    const fullLogs = Array.isArray(training.logs) ? training.logs : [];
+    let logs = fullLogs.slice();
+
+    if (limit > 0 && fullLogs.length > limit) {
+      logs = fullLogs.slice(-limit);
+    }
+
+    if (order === 'desc') {
+      logs = logs.slice().reverse();
+    }
+
+    res.status(200).json({
+      success: true,
+      trainingId: training._id,
+      count: fullLogs.length,
+      logsReturned: logs.length,
+      order,
+      limit: limit || null,
+      logs,
+      logsUrl: training.logsUrl || null,
+    });
+  } catch (error) {
+    console.error('Error fetching training logs:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch training logs',
       error: error.message,
     });
   }
