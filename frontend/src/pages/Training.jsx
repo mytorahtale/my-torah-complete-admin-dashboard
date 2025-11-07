@@ -130,7 +130,11 @@ function Training() {
 
   const fetchUsersList = useCallback(async () => {
     try {
-      const response = await userAPI.getAll({ limit: 0, minimal: true });
+      const response = await userAPI.getAll({
+        limit: 0,
+        minimal: true,
+        includeImageAssets: true,
+      });
       const resolvedUsers = Array.isArray(response?.data)
         ? response.data
         : Array.isArray(response)

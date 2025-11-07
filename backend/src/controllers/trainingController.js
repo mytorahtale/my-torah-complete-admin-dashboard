@@ -21,6 +21,10 @@ const {
   broadcastTraining,
   populateTrainingForClient,
 } = require('../services/trainingWorkflow');
+const {
+  createPendingReplicateId,
+  isPendingReplicateId,
+} = require('../utils/replicateTraining');
 
 const MAX_TRAINING_IMAGES = 25;
 
@@ -510,6 +514,8 @@ exports.startTraining = async (req, res) => {
       console.log('⚠️  No REPLICATE_USERNAME set - training will not be saved to account');
     }
 
+    const pendingReplicateTrainingId = createPendingReplicateId(uniqueModelName);
+
     const newTraining = await Training.create({
       userId,
       modelName: uniqueModelName,
@@ -518,6 +524,7 @@ exports.startTraining = async (req, res) => {
       status: 'queued',
       progress: 0,
       logsUrl: null,
+      replicateTrainingId: pendingReplicateTrainingId,
       trainingConfig: trainingConfigRecord,
       attempts: 0,
       events: [
@@ -622,7 +629,7 @@ exports.checkTrainingStatus = async (req, res) => {
       });
     }
 
-    if (!training.replicateTrainingId) {
+    if (!training.replicateTrainingId || isPendingReplicateId(training.replicateTrainingId)) {
       return res.status(200).json({
         success: true,
         data: training,
@@ -668,6 +675,13 @@ exports.cancelTraining = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Training not found',
+      });
+    }
+
+    if (!training.replicateTrainingId || isPendingReplicateId(training.replicateTrainingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Training has not been dispatched to Replicate yet.',
       });
     }
 

@@ -20,6 +20,7 @@ const { subscribeToTrainingUpdates } = require('./trainingEvents');
 const { startStorybookAutomation } = require('./storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('./storybookEvents');
 const { emitAutomationUpdate } = require('./automationEvents');
+const { createPendingReplicateId } = require('../utils/replicateTraining');
 
 const MAX_TRAINING_IMAGES = 25;
 
@@ -281,7 +282,7 @@ const dispatchTrainingForAutomation = async ({
     training = await Training.create({
       userId: user._id,
       modelName: uniqueModelName,
-      replicateTrainingId: `pending:${uniqueModelName}:${Date.now()}`,
+      replicateTrainingId: createPendingReplicateId(uniqueModelName),
       imageUrls: assets.map((asset) => asset.previewUrl || asset.url).filter(Boolean),
       imageAssets: assets.map((asset) => ({
         key: asset.key,

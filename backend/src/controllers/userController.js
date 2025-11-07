@@ -89,9 +89,11 @@ exports.getAllUsers = async (req, res) => {
       sortBy = 'createdAt',
       sortOrder = 'desc',
       minimal,
+      includeImageAssets,
     } = req.query;
 
     const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
+    const shouldIncludeImageAssets = parseBoolean(includeImageAssets);
 
     const numericLimit = toPositiveInteger(limit, 10);
     const rawPage = toPositiveInteger(page, 1) || 1;
@@ -162,7 +164,10 @@ exports.getAllUsers = async (req, res) => {
           status: 1,
           createdAt: 1,
           updatedAt: 1,
+          ...(shouldIncludeImageAssets && { imageAssets: 1 }),
         }
+      : shouldIncludeImageAssets
+      ? undefined
       : null;
 
     const query = User.find(filter).sort(sort);
