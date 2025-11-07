@@ -109,15 +109,65 @@ const resolvePromptByGender = (source = {}, gender = '') => {
 };
 
 const getGenderPronouns = (gender) => {
-  if (!gender) return { subject: '', possessive: '', object: '' };
+  if (!gender) {
+    return {
+      subject: '',
+      possessive: '',
+      object: '',
+      possessivePronoun: '',
+      possessiveDeterminer: '',
+    };
+  }
   const lowerGender = gender.toLowerCase();
   if (lowerGender === 'male') {
-    return { subject: 'He', possessive: 'His', object: 'Him' };
+    return {
+      subject: 'He',
+      possessive: 'His',
+      object: 'Him',
+      possessivePronoun: 'His',
+      possessiveDeterminer: 'His',
+    };
   }
   if (lowerGender === 'female') {
-    return { subject: 'She', possessive: 'Hers', object: 'Her' };
+    return {
+      subject: 'She',
+      possessive: 'Her',
+      object: 'Her',
+      possessivePronoun: 'Hers',
+      possessiveDeterminer: 'Her',
+    };
   }
-  return { subject: 'They', possessive: 'Their', object: 'Them' };
+  return {
+    subject: 'They',
+    possessive: 'Their',
+    object: 'Them',
+    possessivePronoun: 'Theirs',
+    possessiveDeterminer: 'Their',
+  };
+};
+
+const applyPlaceholderCasing = (placeholder, replacement) => {
+  if (!placeholder || typeof placeholder !== 'string') return replacement || '';
+  if (!replacement) return '';
+
+  const inner = placeholder.slice(1, -1);
+  if (!inner) return replacement;
+
+  if (inner === inner.toUpperCase()) {
+    return replacement.toUpperCase();
+  }
+
+  if (inner === inner.toLowerCase()) {
+    return replacement.toLowerCase();
+  }
+
+  const isTitleCase =
+    inner[0] === inner[0].toUpperCase() && inner.slice(1) === inner.slice(1).toLowerCase();
+  if (isTitleCase) {
+    return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
+  }
+
+  return replacement;
 };
 
 const replaceReaderPlaceholders = (value, readerName, readerGender) => {
@@ -139,9 +189,24 @@ const replaceReaderPlaceholders = (value, readerName, readerGender) => {
 
   if (readerGender) {
     const pronouns = getGenderPronouns(readerGender);
-    result = result.replace(/\{gender\}/gi, pronouns.subject);
-    result = result.replace(/\{genderpos\}/gi, pronouns.possessive);
-    result = result.replace(/\{genderper\}/gi, pronouns.object);
+    result = result.replace(/\{gender\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.subject)
+    );
+    result = result.replace(/\{genderpos\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.possessiveDeterminer || pronouns.possessive)
+    );
+    result = result.replace(/\{genderper\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.object)
+    );
+    result = result.replace(/\{genderx\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.possessivePronoun || pronouns.possessive)
+    );
+    result = result.replace(/\{gendery\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.object)
+    );
+    result = result.replace(/\{genderz\}/gi, (match) =>
+      applyPlaceholderCasing(match, pronouns.possessiveDeterminer || pronouns.possessive)
+    );
   }
 
   return result;
