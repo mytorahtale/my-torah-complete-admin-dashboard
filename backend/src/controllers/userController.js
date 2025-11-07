@@ -29,6 +29,11 @@ const sanitiseUserPayload = (source = {}) => {
     }
   }
 
+  if (typeof source.secondTitle === 'string') {
+    const trimmed = source.secondTitle.trim();
+    payload.secondTitle = trimmed; // Can be empty string
+  }
+
   if (source.age !== undefined && source.age !== null && `${source.age}`.trim() !== '') {
     const parsed = Number.parseInt(source.age, 10);
     if (!Number.isNaN(parsed)) {

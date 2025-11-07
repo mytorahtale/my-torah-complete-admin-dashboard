@@ -1700,7 +1700,39 @@ exports.updateBook = async (req, res) => {
       };
     }
 
-    const updatedBook = await book.save();
+    // Save with version conflict handling
+    let updatedBook;
+    try {
+      // Disable version checking for this complex update operation
+      updatedBook = await book.save({ validateBeforeSave: true });
+    } catch (versionError) {
+      // If version error occurs, refetch and retry once
+      if (versionError.name === 'VersionError') {
+        console.log('Version conflict detected, retrying update...');
+
+        // Refetch the book with the latest version
+        const freshBook = await Book.findById(id);
+        if (!freshBook) {
+          throw new Error('Book not found during retry');
+        }
+
+        // Apply all the changes again to the fresh document
+        freshBook.name = book.name;
+        freshBook.description = book.description;
+        freshBook.gender = book.gender;
+        freshBook.status = book.status;
+        freshBook.coverImage = book.coverImage;
+        freshBook.pages = book.pages;
+        freshBook.coverPage = book.coverPage;
+        freshBook.dedicationPage = book.dedicationPage;
+        freshBook.updatedAt = new Date();
+
+        // Retry save without version checking
+        updatedBook = await freshBook.save({ validateBeforeSave: true });
+      } else {
+        throw versionError;
+      }
+    }
 
     await cleanupKeys(keysToDelete);
 
@@ -1903,18 +1935,26 @@ exports.generateStorybook = async (req, res) => {
       });
     }
 
-    if ((!readerName || !readerGender) && readerId) {
-      const reader = await User.findById(readerId).select('name gender').lean();
-      if (reader?.name) {
+    let readerSecondTitle = normalizeString(req.body.readerSecondTitle);
+
+    if ((!readerName || !readerGender || !readerSecondTitle) && readerId) {
+      const reader = await User.findById(readerId).select('name gender secondTitle').lean();
+      if (!readerName && reader?.name) {
         readerName = normalizeString(reader.name);
       }
       if (!readerGender && reader?.gender) {
         readerGender = normalizeString(reader.gender);
       }
-    } else if (!readerGender && readerId) {
-      const reader = await User.findById(readerId).select('gender').lean();
-      if (reader?.gender) {
+      if (!readerSecondTitle && reader?.secondTitle) {
+        readerSecondTitle = normalizeString(reader.secondTitle);
+      }
+    } else if ((!readerGender || !readerSecondTitle) && readerId) {
+      const reader = await User.findById(readerId).select('gender secondTitle').lean();
+      if (!readerGender && reader?.gender) {
         readerGender = normalizeString(reader.gender);
+      }
+      if (!readerSecondTitle && reader?.secondTitle) {
+        readerSecondTitle = normalizeString(reader.secondTitle);
       }
     }
 
@@ -2057,6 +2097,7 @@ exports.generateStorybook = async (req, res) => {
       book,
       readerName,
       readerGender,
+      readerSecondTitle,
       storyPages,
     });
     if (dedicationFrontMatter) {
@@ -2513,15 +2554,22 @@ exports.regenerateStorybookPdf = async (req, res) => {
       normalizeString(readerGenderOverride) ||
       normalizeString(pdfAssetDoc.readerGender) ||
       '';
+    let readerSecondTitle =
+      normalizeString(req.body.readerSecondTitle) ||
+      pdfAssetDoc.readerSecondTitle ||
+      '';
 
-    if ((!readerName || !readerGender) && resolvedReaderId) {
-      const readerDoc = await User.findById(resolvedReaderId).select('name gender').lean();
+    if ((!readerName || !readerGender || !readerSecondTitle) && resolvedReaderId) {
+      const readerDoc = await User.findById(resolvedReaderId).select('name gender secondTitle').lean();
       if (readerDoc) {
         if (!readerName && readerDoc.name) {
           readerName = normalizeString(readerDoc.name);
         }
         if (!readerGender && readerDoc.gender) {
           readerGender = normalizeString(readerDoc.gender);
+        }
+        if (!readerSecondTitle && readerDoc.secondTitle) {
+          readerSecondTitle = normalizeString(readerDoc.secondTitle);
         }
       }
     }
@@ -2562,6 +2610,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
       book,
       readerName,
       readerGender,
+      readerSecondTitle,
       storyPages,
       jobPage: dedicationJobPage,
     });

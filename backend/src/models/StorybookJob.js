@@ -197,6 +197,11 @@ const storybookJobSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    readerSecondTitle: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     title: {
       type: String,
       default: '',
