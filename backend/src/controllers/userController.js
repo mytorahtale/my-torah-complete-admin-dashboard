@@ -175,7 +175,7 @@ exports.getAllUsers = async (req, res) => {
       ? undefined
       : null;
 
-    const query = User.find(filter).sort(sort);
+    const query = User.find(filter).sort(sort).allowDiskUse(true);
     if (projection) {
       query.select(projection);
     }

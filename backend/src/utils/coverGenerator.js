@@ -295,10 +295,24 @@ async function generateCoverPage(options) {
   const width = bgImage.width;
   const height = bgImage.height;
 
-  const canvas = createCanvas(width, height);
+  // Add 0.75 inch margin on all sides at 300 DPI (print quality)
+  // 0.75 inch × 300 DPI = 225 pixels
+  const MARGIN = 225;
+  const canvasWidth = width + (MARGIN * 2);
+  const canvasHeight = height + (MARGIN * 2);
+
+  const canvas = createCanvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext('2d');
 
-  // Draw background
+  // Fill with white background (margin area)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // Translate context to add margin offset to all drawing operations
+  ctx.save();
+  ctx.translate(MARGIN, MARGIN);
+
+  // Draw background image
   ctx.drawImage(bgImage, 0, 0, width, height);
 
   // Load and draw character image if provided with transparent background
@@ -595,6 +609,9 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
   }
 
   drawHeroTitle(ctx, childName, width, height, rightSide);
+
+  // Restore context (end margin offset)
+  ctx.restore();
 
   return canvas.toBuffer('image/png');
 }

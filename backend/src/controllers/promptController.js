@@ -398,7 +398,7 @@ exports.listPrompts = async (req, res) => {
     const skip = limit > 0 ? (effectivePage - 1) * limit : 0;
 
     const sort = { [resolvedSortField]: sortOrderRaw, _id: sortOrderRaw };
-    const query = Prompt.find(filters).sort(sort);
+    const query = Prompt.find(filters).sort(sort).allowDiskUse(true);
     if (limit > 0) {
       query.skip(skip).limit(limit);
     }

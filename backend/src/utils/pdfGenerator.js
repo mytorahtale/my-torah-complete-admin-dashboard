@@ -872,6 +872,7 @@ async function generateStorybookPdf({ title, pages }) {
 
           if (coverBuffer) {
             const coverImage = await pdfDoc.embedPng(coverBuffer);
+            // Cover image already includes margin, draw at full page size
             page.drawImage(coverImage, {
               x: 0,
               y: 0,
@@ -940,6 +941,7 @@ async function generateStorybookPdf({ title, pages }) {
       });
 
       const coverImage = await pdfDoc.embedPng(coverBuffer);
+      // Cover image already includes margin, draw at full page size
       page.drawImage(coverImage, {
         x: 0,
         y: 0,

@@ -204,7 +204,8 @@ exports.getAllTrainings = async (req, res) => {
 
     const query = Training.find(filter)
       .populate('userId', 'name email age gender')
-      .sort(sort);
+      .sort(sort)
+      .allowDiskUse(true);
 
     if (isMinimal) {
       query
@@ -281,6 +282,221 @@ exports.getAllTrainings = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching trainings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch trainings',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get trainings with minimal data for list view (optimized for large datasets)
+ * @route GET /api/trainings/lean
+ */
+exports.getTrainingsLean = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      userId,
+      status,
+      search = '',
+      from,
+      to,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+    } = req.query;
+
+    const numericLimit = Math.min(toPositiveInteger(limit, 10), 100);
+    const rawPage = toPositiveInteger(page, 1) || 1;
+
+    const filter = {};
+
+    if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid userId provided',
+        });
+      }
+      filter.userId = new mongoose.Types.ObjectId(userId);
+    }
+
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    if (search && typeof search === 'string') {
+      const expression = new RegExp(escapeRegex(search.trim()), 'i');
+      filter.$or = [{ modelName: expression }];
+    }
+
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) {
+        const fromDate = new Date(from);
+        if (!Number.isNaN(fromDate.getTime())) {
+          filter.createdAt.$gte = fromDate;
+        }
+      }
+      if (to) {
+        const toDate = new Date(to);
+        if (!Number.isNaN(toDate.getTime())) {
+          filter.createdAt.$lte = toDate;
+        }
+      }
+    }
+
+    const sortField = VALID_TRAINING_SORT_FIELDS.has(sortBy) ? sortBy : 'createdAt';
+    const sortDirection = sortOrder === 'asc' ? 1 : -1;
+
+    // Use aggregation for efficient querying with minimal data
+    const pipeline = [
+      { $match: filter },
+      {
+        $project: {
+          _id: 1,
+          userId: 1,
+          modelName: 1,
+          status: 1,
+          progress: 1,
+          attempts: 1,
+          modelVersion: 1,
+          error: 1,
+          createdAt: 1,
+          startedAt: 1,
+          completedAt: 1,
+          updatedAt: 1,
+          // Only include minimal imageAsset data (url, size, contentType)
+          imageAssets: {
+            $map: {
+              input: { $ifNull: ['$imageAssets', []] },
+              as: 'asset',
+              in: {
+                url: '$$asset.url',
+                size: '$$asset.size',
+                contentType: '$$asset.contentType',
+              },
+            },
+          },
+          imageUrls: 1,
+          imageAssetCount: { $size: { $ifNull: ['$imageAssets', []] } },
+          imageUrlCount: { $size: { $ifNull: ['$imageUrls', []] } },
+        },
+      },
+      { $sort: { [sortField]: sortDirection, _id: sortDirection } },
+    ];
+
+    // Get total count
+    const countPipeline = [...pipeline, { $count: 'total' }];
+    const countResult = await Training.aggregate(countPipeline).allowDiskUse(true);
+    const totalTrainings = countResult.length > 0 ? countResult[0].total : 0;
+
+    // Add pagination
+    const totalPages =
+      numericLimit > 0 && totalTrainings > 0
+        ? Math.ceil(totalTrainings / numericLimit)
+        : totalTrainings > 0
+        ? 1
+        : 0;
+    const effectivePage =
+      numericLimit > 0 ? Math.min(Math.max(rawPage, 1), Math.max(totalPages, 1)) : 1;
+    const skip = numericLimit > 0 ? (effectivePage - 1) * numericLimit : 0;
+
+    if (numericLimit > 0) {
+      pipeline.push({ $skip: skip });
+      pipeline.push({ $limit: numericLimit });
+    }
+
+    // Lookup user data
+    pipeline.push({
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'userInfo',
+      },
+    });
+
+    pipeline.push({
+      $addFields: {
+        userId: {
+          $let: {
+            vars: { user: { $arrayElemAt: ['$userInfo', 0] } },
+            in: {
+              $cond: {
+                if: { $ne: ['$$user', null] },
+                then: {
+                  _id: '$$user._id',
+                  name: '$$user.name',
+                  email: '$$user.email',
+                },
+                else: null,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    pipeline.push({ $project: { userInfo: 0 } });
+
+    const trainings = await Training.aggregate(pipeline).allowDiskUse(true);
+
+    // Limit imageAssets to first 12 for display
+    const processedTrainings = trainings.map((training) => ({
+      ...training,
+      imageAssets: (training.imageAssets || []).slice(0, 12),
+      imageUrls: (training.imageUrls || []).slice(0, 12),
+    }));
+
+    // Get status breakdown
+    const statusAggregation = await Training.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+        },
+      },
+    ]).allowDiskUse(true);
+
+    const statusBreakdown = statusAggregation.reduce((accumulator, item) => {
+      if (item?._id) {
+        accumulator[item._id] = item.count;
+      }
+      return accumulator;
+    }, {});
+
+    res.status(200).json({
+      success: true,
+      count: processedTrainings.length,
+      data: processedTrainings,
+      pagination: {
+        page: totalPages === 0 ? 1 : effectivePage,
+        limit: numericLimit,
+        total: totalTrainings,
+        totalPages,
+        hasNextPage: numericLimit > 0 && effectivePage < totalPages,
+        hasPrevPage: numericLimit > 0 && effectivePage > 1,
+      },
+      filters: {
+        search: typeof search === 'string' ? search : '',
+        status: status || 'all',
+        userId: userId || '',
+        from: from || '',
+        to: to || '',
+        sortBy: sortField,
+        sortOrder: sortDirection === 1 ? 'asc' : 'desc',
+      },
+      stats: {
+        total: totalTrainings,
+        byStatus: statusBreakdown,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching lean trainings:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch trainings',
@@ -827,7 +1043,8 @@ exports.getUserSuccessfulTrainings = async (req, res) => {
       modelVersion: { $ne: null },
     })
       .select('modelName modelVersion createdAt completedAt')
-      .sort({ completedAt: -1 });
+      .sort({ completedAt: -1 })
+      .allowDiskUse(true);
 
     res.status(200).json({
       success: true,

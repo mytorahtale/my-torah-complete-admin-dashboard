@@ -954,7 +954,7 @@ exports.getAllBooks = async (req, res) => {
       });
       books = await Book.aggregate(pipeline);
     } else {
-      const query = Book.find(filter).sort(sort);
+      const query = Book.find(filter).sort(sort).allowDiskUse(true);
       if (numericLimit > 0) {
         query.skip(skip).limit(numericLimit);
       }

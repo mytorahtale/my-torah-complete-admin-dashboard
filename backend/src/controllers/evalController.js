@@ -246,7 +246,7 @@ exports.listEvaluations = async (req, res) => {
     const resolvedSortField = allowedSortFields.has(sortParam) ? sortParam : 'createdAt';
     const sort = { [resolvedSortField]: sortOrderParam, _id: sortOrderParam };
 
-    const query = Evaluation.find(filters).sort(sort);
+    const query = Evaluation.find(filters).sort(sort).allowDiskUse(true);
     if (limit > 0) {
       query.skip(skip).limit(limit);
     }

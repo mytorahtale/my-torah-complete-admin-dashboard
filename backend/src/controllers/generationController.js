@@ -119,7 +119,8 @@ exports.getAllGenerations = async (req, res) => {
     const query = Generation.find(filter)
       .populate('userId', 'name email status')
       .populate('trainingId', 'modelName modelVersion')
-      .sort(sort);
+      .sort(sort)
+      .allowDiskUse(true);
 
     if (numericLimit > 0) {
       query.skip(skip).limit(numericLimit);
@@ -629,7 +630,8 @@ exports.getGenerationsByUser = async (req, res) => {
   try {
     const generations = await Generation.find({ userId: req.params.userId })
       .populate('trainingId', 'modelName modelVersion')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .allowDiskUse(true);
 
     res.status(200).json({
       success: true,

@@ -41,6 +41,13 @@ const normalizeTrainingPayload = (req, res, next) => {
 router.get('/', trainingController.getAllTrainings);
 
 /**
+ * @route   GET /api/trainings/lean
+ * @desc    Get trainings with minimal data (optimized for large datasets)
+ * @access  Public
+ */
+router.get('/lean', trainingController.getTrainingsLean);
+
+/**
  * @route   GET /api/trainings/stream/live
  * @desc    Subscribe to training updates (SSE)
  * @access  Public

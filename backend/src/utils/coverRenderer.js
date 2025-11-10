@@ -279,13 +279,27 @@ async function renderCoverToCanvas({
   childName,
 }) {
   registerCoverFonts();
-  const canvas = createCanvas(pageWidth, pageHeight);
+
+  // Add 0.75 inch margin on all sides at 300 DPI (print quality)
+  // 0.75 inch × 300 DPI = 225 pixels
+  const MARGIN = 225;
+  const canvasWidth = pageWidth + (MARGIN * 2);
+  const canvasHeight = pageHeight + (MARGIN * 2);
+
+  const canvas = createCanvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext('2d');
 
+  // Fill with white background (margin area)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // Translate context to add margin offset to all drawing operations
   ctx.save();
+  ctx.translate(MARGIN, MARGIN);
+
+  // Draw black background for content area
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, pageWidth, pageHeight);
-  ctx.restore();
 
   let backgroundImage = null;
   if (backgroundBuffer) {
@@ -526,6 +540,9 @@ async function renderCoverToCanvas({
   }
 
   drawHeroTitle(ctx, childName, pageWidth, pageHeight);
+
+  // Restore context (end margin offset)
+  ctx.restore();
 
   return canvas;
 }

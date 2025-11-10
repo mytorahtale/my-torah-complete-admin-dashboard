@@ -175,7 +175,7 @@ function Training() {
           params.userId = trainingUserFilter;
         }
 
-        const response = await trainingAPI.getAll({ ...params, minimal: true });
+        const response = await trainingAPI.getLean(params);
         const fetchedTrainings = Array.isArray(response?.data)
           ? response.data
           : Array.isArray(response)

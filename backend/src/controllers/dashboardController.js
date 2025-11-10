@@ -91,10 +91,12 @@ exports.getOverview = async (req, res) => {
       ]),
       Book.find({}, { name: 1, status: 1, createdAt: 1, updatedAt: 1 })
         .sort({ updatedAt: -1, createdAt: -1 })
+        .allowDiskUse(true)
         .limit(8)
         .lean(),
       Training.find({}, { modelName: 1, status: 1, createdAt: 1, updatedAt: 1 })
         .sort({ updatedAt: -1, createdAt: -1 })
+        .allowDiskUse(true)
         .limit(8)
         .lean(),
       Generation.find(
@@ -102,6 +104,7 @@ exports.getOverview = async (req, res) => {
         { prompt: 1, status: 1, createdAt: 1, updatedAt: 1 }
       )
         .sort({ updatedAt: -1, createdAt: -1 })
+        .allowDiskUse(true)
         .limit(8)
         .lean(),
     ]);

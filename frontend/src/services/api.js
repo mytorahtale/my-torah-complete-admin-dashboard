@@ -112,6 +112,7 @@ export const userAPI = {
 // Training API
 export const trainingAPI = {
   getAll: (params) => api.get('/trainings', { params }),
+  getLean: (params) => api.get('/trainings/lean', { params }),
   getById: (id) => api.get(`/trainings/${id}`),
   getLogs: (id, params) => api.get(`/trainings/${id}/logs`, { params }),
   create: (data) => {
