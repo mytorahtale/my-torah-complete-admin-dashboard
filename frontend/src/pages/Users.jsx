@@ -179,11 +179,20 @@ const buildUserPayload = (formValues) => {
     }
   }
 
+  // Clean up undefined/null values, but preserve secondTitle even if empty string
   Object.keys(payload).forEach((key) => {
+    // Keep secondTitle even if empty string (to allow clearing it)
+    if (key === 'secondTitle') {
+      return;
+    }
     if (payload[key] === undefined || payload[key] === null || payload[key] === '') {
       delete payload[key];
     }
   });
+
+  console.log('📦 buildUserPayload - Input:', formValues.secondTitle);
+  console.log('📦 buildUserPayload - Output:', payload.secondTitle);
+  console.log('📦 buildUserPayload - Full payload:', payload);
 
   return payload;
 };
@@ -254,6 +263,11 @@ function Users() {
 
       const response = await userAPI.getAll(params);
       const fetchedUsers = Array.isArray(response?.data) ? response.data : [];
+
+      // Debug: Check if secondTitle is present in fetched users
+      console.log('📥 fetchUsers - Sample user with secondTitle:',
+        fetchedUsers.find(u => u.secondTitle) || 'No user with secondTitle found'
+      );
 
       setUsers(fetchedUsers);
       const responsePagination = response?.pagination || {};
@@ -808,6 +822,14 @@ function Users() {
   };
 
   const handleEdit = (user) => {
+    console.log('🔍 handleEdit called with user:', {
+      _id: user._id,
+      name: user.name,
+      secondTitle: user.secondTitle,
+      hasSecondTitle: 'secondTitle' in user,
+      secondTitleType: typeof user.secondTitle
+    });
+
     setFormData({
       name: user.name || '',
       secondTitle: user.secondTitle || '',

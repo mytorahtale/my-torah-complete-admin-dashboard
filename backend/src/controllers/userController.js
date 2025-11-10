@@ -164,6 +164,7 @@ exports.getAllUsers = async (req, res) => {
     const projection = isMinimal
       ? {
           name: 1,
+          secondTitle: 1,
           email: 1,
           gender: 1,
           status: 1,
@@ -304,6 +305,8 @@ exports.updateUser = async (req, res) => {
     }
 
     const payload = sanitiseUserPayload(req.body);
+    console.log('🔧 updateUser - Received secondTitle:', req.body.secondTitle);
+    console.log('🔧 updateUser - Sanitized payload:', payload);
 
     // Check if user exists
     let user = await User.findById(req.params.id);
@@ -314,11 +317,15 @@ exports.updateUser = async (req, res) => {
       });
     }
 
+    console.log('🔧 updateUser - Before update, user secondTitle:', user.secondTitle);
+
     // Update user fields
     user = await User.findByIdAndUpdate(req.params.id, payload, {
       new: true,
       runValidators: true,
     });
+
+    console.log('🔧 updateUser - After update, user secondTitle:', user.secondTitle);
 
     res.status(200).json({
       success: true,

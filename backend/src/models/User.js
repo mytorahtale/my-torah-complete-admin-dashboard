@@ -53,7 +53,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
       maxlength: [500, 'Second title cannot exceed 500 characters'],
-      set: toOptionalTrimmedString,
       default: '',
     },
     age: {
