@@ -30,7 +30,7 @@ api.interceptors.response.use(
 // Book API
 export const bookAPI = {
   getAll: (params) => api.get('/books', { params }),
-  getById: (id) => api.get(`/books/${id}`),
+  getById: (id, params) => api.get(`/books/${id}`, { params }),
   getForEdit: (id) => api.get(`/books/${id}/editable`),
   create: (data) => {
     if (data instanceof FormData) {
@@ -74,6 +74,7 @@ export const bookAPI = {
   selectStorybookPageCandidate: (bookId, assetId, pageOrder, data = {}) =>
     api.post(`/books/${bookId}/storybooks/${assetId}/pages/${pageOrder}/select`, data),
   getStorybookJobs: (id, params) => api.get(`/books/${id}/storybooks/jobs`, { params }),
+  getStorybookJob: (bookId, jobId) => api.get(`/books/${bookId}/storybooks/jobs/${jobId}`),
   generateCoverPreview: (formData) =>
     api.post('/books/cover-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

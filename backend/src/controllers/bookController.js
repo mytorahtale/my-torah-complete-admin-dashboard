@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const { validationResult } = require('express-validator');
 const Book = require('../models/Book');
 const User = require('../models/User');
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, rgb } = require('pdf-lib');
 const {
   uploadBufferToS3,
   deleteFromS3,
@@ -874,6 +874,7 @@ exports.getAllBooks = async (req, res) => {
     } = req.query;
 
     const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
+    console.log(`[getAllBooks] minimal=${minimal}, isMinimal=${isMinimal}, query params:`, req.query);
 
     const filter = {};
 
@@ -937,17 +938,30 @@ exports.getAllBooks = async (req, res) => {
       }
       pipeline.push({
         $project: {
+          _id: 1,
           name: 1,
           description: 1,
-          slug: 1,
           status: 1,
           gender: 1,
-          coverImage: 1,
           createdAt: 1,
-          updatedAt: 1,
+          'coverImage.url': 1,
           pageCount: {
             $size: {
               $ifNull: ['$pages', []],
+            },
+          },
+          highlightedPageCount: {
+            $size: {
+              $filter: {
+                input: { $ifNull: ['$pages', []] },
+                as: 'page',
+                cond: {
+                  $or: [
+                    { $ne: [{ $ifNull: ['$$page.backgroundImage.url', null] }, null] },
+                    { $ne: [{ $ifNull: ['$$page.characterImage.url', null] }, null] },
+                  ],
+                },
+              },
             },
           },
         },
@@ -1059,6 +1073,62 @@ exports.getAllBooks = async (req, res) => {
  */
 exports.getBookById = async (req, res) => {
   try {
+    const { minimal } = req.query;
+    const isMinimal = typeof minimal === 'string' && minimal.toLowerCase() === 'true';
+
+    if (isMinimal) {
+      const book = await Book.findById(req.params.id)
+        .select('_id name description status gender coverImage.url createdAt updatedAt pages')
+        .lean();
+
+      if (!book) {
+        return res.status(404).json({
+          success: false,
+          message: 'Book not found',
+        });
+      }
+
+      const pageCount = Array.isArray(book.pages) ? book.pages.length : 0;
+
+      // Get minimal pdfAssets data (without pages array)
+      const fullBook = await Book.findById(req.params.id)
+        .select('pdfAssets')
+        .lean();
+
+      const minimalPdfAssets = (fullBook?.pdfAssets || []).map(asset => ({
+        _id: asset._id,
+        key: asset.key,
+        title: asset.title,
+        url: asset.url,
+        pageCount: asset.pageCount,
+        size: asset.size,
+        createdAt: asset.createdAt,
+        updatedAt: asset.updatedAt,
+        variant: asset.variant,
+        derivedFromAssetId: asset.derivedFromAssetId,
+        derivedFromAssetKey: asset.derivedFromAssetKey,
+        confirmedAt: asset.confirmedAt,
+        readerId: asset.readerId,
+        readerName: asset.readerName,
+        readerGender: asset.readerGender,
+        trainingId: asset.trainingId,
+        trainingName: asset.trainingName,
+        trainingModelName: asset.trainingModelName,
+        metadata: asset.metadata,
+      }));
+
+      const { pages: _, ...bookWithoutPages } = book;
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          ...bookWithoutPages,
+          pageCount,
+          pdfAssets: minimalPdfAssets,
+        },
+      });
+    }
+
     const book = await Book.findById(req.params.id);
 
     if (!book) {
@@ -2858,37 +2928,72 @@ exports.confirmStorybookPdf = async (req, res) => {
 
     const sourcePdf = await PDFDocument.load(sourceBuffer);
     const splitPdf = await PDFDocument.create();
-    const originalPageCount = sourcePdf.getPageCount();
+    const pageCount = sourcePdf.getPageCount();
+    const originalPageCount = pageCount; // Store for metadata
 
-    for (let index = 0; index < originalPageCount; index += 1) {
-      const [sourcePageCopy] = await splitPdf.copyPages(sourcePdf, [index]);
-      const sourcePage = sourcePdf.getPage(index);
-      const pageWidth = sourcePage.getWidth();
-      const pageHeight = sourcePage.getHeight();
-      const halfWidth = pageWidth / 2;
+    // 0.125 inch bleed = 9 points (72 points per inch)
+    const bleedSize = 0.125 * 72;
+    const targetSquareSize = 8 * 72; // 8 inches = 576 points
 
-      if (index === 0) {
-        splitPdf.addPage(sourcePageCopy);
+    for (let i = 0; i < pageCount; i++) {
+      const sourcePage = sourcePdf.getPage(i);
+      const originalWidth = sourcePage.getWidth();
+      const originalHeight = sourcePage.getHeight();
+
+      // Page 0 (cover page): Keep EXACTLY as-is - no resize, no changes, no split
+      if (i === 0) {
+        const [coverCopy] = await splitPdf.copyPages(sourcePdf, [i]);
+        splitPdf.addPage(coverCopy);
         continue;
       }
 
-      const [rightPage] = await splitPdf.copyPages(sourcePdf, [index]);
-      const leftPage = sourcePageCopy;
+      // All other pages: 16:8 ratio - split into two 8x8 squares with white bleed margin
+      const embeddedPage = await splitPdf.embedPage(sourcePage);
 
-      const applyBox = (page) => {
-        if (typeof page.setMediaBox === 'function') page.setMediaBox(0, 0, halfWidth, pageHeight);
-        if (typeof page.setCropBox === 'function') page.setCropBox(0, 0, halfWidth, pageHeight);
-        if (typeof page.setBleedBox === 'function') page.setBleedBox(0, 0, halfWidth, pageHeight);
-        if (typeof page.setTrimBox === 'function') page.setTrimBox(0, 0, halfWidth, pageHeight);
-        if (typeof page.setArtBox === 'function') page.setArtBox(0, 0, halfWidth, pageHeight);
-      };
+      // Content size after accounting for bleed on all sides
+      // 8 inches - (0.125" bleed × 2 sides) = 7.75 inches = 558 points
+      const contentSize = targetSquareSize - (bleedSize * 2);
 
-      applyBox(leftPage);
-      splitPdf.addPage(leftPage);
+      // Scale factor to fit content with bleed margin
+      const scaleFactor = contentSize / targetSquareSize;
+      const scaledWidth = originalWidth * scaleFactor;
+      const scaledHeight = originalHeight * scaleFactor;
 
-      rightPage.translateContent(-halfWidth, 0);
-      applyBox(rightPage);
-      splitPdf.addPage(rightPage);
+      // LEFT HALF: Create 8x8 square canvas, draw scaled left half with white bleed margin
+      const leftPage = splitPdf.addPage([targetSquareSize, targetSquareSize]);
+      leftPage.drawPage(embeddedPage, {
+        x: bleedSize,
+        y: bleedSize,
+        width: scaledWidth,
+        height: scaledHeight,
+      });
+      // Cover the right margin area with white to hide any overflow from the right half
+      leftPage.drawRectangle({
+        x: bleedSize + contentSize,
+        y: 0,
+        width: bleedSize,
+        height: targetSquareSize,
+        color: rgb(1, 1, 1),
+      });
+
+      // RIGHT HALF: Create 8x8 square canvas, draw scaled right half with white bleed margin
+      const rightPage = splitPdf.addPage([targetSquareSize, targetSquareSize]);
+      // Shift left by half the scaled width to show the right half
+      const halfScaledWidth = scaledWidth / 2;
+      rightPage.drawPage(embeddedPage, {
+        x: bleedSize - halfScaledWidth,
+        y: bleedSize,
+        width: scaledWidth,
+        height: scaledHeight,
+      });
+      // Cover the left margin area with white to hide any overflow from the left half
+      rightPage.drawRectangle({
+        x: 0,
+        y: 0,
+        width: bleedSize,
+        height: targetSquareSize,
+        color: rgb(1, 1, 1),
+      });
     }
 
     const splitPdfBytes = await splitPdf.save();
@@ -2926,6 +3031,10 @@ exports.confirmStorybookPdf = async (req, res) => {
         originalPageCount,
         generatedPageCount: splitPdf.getPageCount(),
         preservedCoverPage: true,
+        resized: true,
+        targetSize: '8x8 inches',
+        bleedSize: '0.125 inches',
+        finalSize: '8.25x8.25 inches',
       },
       pages: (pdfAsset.pages || []).map((page) => cloneDocument(page)),
     };
@@ -3138,6 +3247,7 @@ exports.generateCoverPreview = async (req, res) => {
       rightSide: rightSideData,
       qrCode: qrCodeBuffer || qrCodeUrl,
       childName: previewChildName,
+      usePreviewMargin: true, // Enable 1 inch margin for preview
     });
 
     // Upload to S3 temporarily with a preview key

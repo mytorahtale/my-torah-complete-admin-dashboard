@@ -13,8 +13,17 @@ const { generateDedicationPage } = require('./dedicationGenerator');
 
 const replicate = new Replicate();
 
-const PAGE_WIDTH = 842; // A4 landscape width in points
-const PAGE_HEIGHT = 421; // A4 landscape height in points
+// PDF page dimensions (72 DPI - PDF standard points system)
+// All pages: 16:8 ratio (2:1)
+// Cover page stays 16:8, story pages split into two 8x8 squares during confirm
+const PAGE_WIDTH = 1152; // 16 inches × 72 points/inch = 1152 points
+const PAGE_HEIGHT = 576; // 8 inches × 72 points/inch = 576 points
+
+// Canvas dimensions for high-resolution image generation (300 DPI for print quality)
+// All pages: 16:8 ratio at 300 DPI
+const CANVAS_WIDTH = 4800; // 16 inches × 300 DPI = 4800 pixels
+const CANVAS_HEIGHT = 2400; // 8 inches × 300 DPI = 2400 pixels
+
 const CHARACTER_MAX_WIDTH_RATIO = 0.4;
 const CHARACTER_MAX_HEIGHT_RATIO = 0.8;
 const TEXT_BLOCK_WIDTH = 300;
@@ -872,7 +881,7 @@ async function generateStorybookPdf({ title, pages }) {
 
           if (coverBuffer) {
             const coverImage = await pdfDoc.embedPng(coverBuffer);
-            // Cover image already includes margin, draw at full page size
+            // Cover image is at exact page size, draw at full page dimensions
             page.drawImage(coverImage, {
               x: 0,
               y: 0,
@@ -930,8 +939,8 @@ async function generateStorybookPdf({ title, pages }) {
         : pageData.text || '';
 
       const coverBuffer = await generateCoverImage({
-        pageWidth: PAGE_WIDTH,
-        pageHeight: PAGE_HEIGHT,
+        pageWidth: CANVAS_WIDTH,
+        pageHeight: CANVAS_HEIGHT,
         backgroundBuffer,
         characterBuffer,
         qrBuffer,
@@ -941,7 +950,7 @@ async function generateStorybookPdf({ title, pages }) {
       });
 
       const coverImage = await pdfDoc.embedPng(coverBuffer);
-      // Cover image already includes margin, draw at full page size
+      // Cover image is at exact page size, draw at full page dimensions
       page.drawImage(coverImage, {
         x: 0,
         y: 0,

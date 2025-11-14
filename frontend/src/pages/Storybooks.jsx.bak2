@@ -1953,9 +1953,7 @@ const PageThumbnail = React.memo(
           {previewModel ? (
             <StorybookPageSvg model={previewModel} className="absolute inset-0" />
           ) : (
-            <div className="absolute inset-0 bg-muted/20 flex items-center justify-center p-2">
-              <Skeleton className="h-full w-full" />
-            </div>
+            <div className="absolute inset-0 bg-muted/20" />
           )}
         </div>
       </button>
@@ -3636,6 +3634,28 @@ function Storybooks() {
                   )}
                 </Button>
               ) : null}
+              {hasPages ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 hidden md:flex"
+                  onClick={handleDownloadPreviewAsPdf}
+                  disabled={isDownloadingPdf}
+                >
+                  {isDownloadingPdf ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="hidden lg:inline">Downloading…</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileImage className="h-4 w-4" />
+                      <span className="hidden lg:inline">Download as PDF</span>
+                    </>
+                  )}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -3689,25 +3709,7 @@ function Storybooks() {
                           className="absolute inset-0"
                         />
                       ) : (
-                        <div className="absolute inset-0 bg-muted/10 flex items-center justify-center p-8">
-                          <div className="w-full max-w-2xl space-y-4">
-                            <Skeleton className="h-8 w-3/4 mx-auto" />
-                            <Skeleton className="h-6 w-full" />
-                            <Skeleton className="h-6 w-5/6" />
-                            <Skeleton className="h-6 w-4/5" />
-                            <div className="pt-4 space-y-3">
-                              <Skeleton className="h-32 w-full" />
-                              <div className="flex gap-3">
-                                <Skeleton className="h-24 w-1/3" />
-                                <Skeleton className="h-24 w-1/3" />
-                                <Skeleton className="h-24 w-1/3" />
-                              </div>
-                            </div>
-                            <div className="pt-4">
-                              <Skeleton className="h-6 w-2/3 mx-auto" />
-                            </div>
-                          </div>
-                        </div>
+                        <div className="absolute inset-0 bg-muted/10" />
                       )}
                     </div>
 
@@ -3929,33 +3931,9 @@ function Storybooks() {
                 </div>
               </div>
             ) : (
-              <div className="flex w-full h-full items-center justify-center p-8 bg-muted/10">
-                <div className="w-full max-w-4xl space-y-6">
-                  {/* Title skeleton */}
-                  <div className="space-y-3">
-                    <Skeleton className="h-10 w-2/3 mx-auto" />
-                    <Skeleton className="h-6 w-1/2 mx-auto" />
-                  </div>
-
-                  {/* Main content area */}
-                  <div className="aspect-[842/421] w-full">
-                    <Skeleton className="h-full w-full" />
-                  </div>
-
-                  {/* Bottom info bars */}
-                  <div className="space-y-3">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-5/6" />
-                    <Skeleton className="h-4 w-4/5" />
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex gap-3 justify-center">
-                    <Skeleton className="h-10 w-32" />
-                    <Skeleton className="h-10 w-32" />
-                    <Skeleton className="h-10 w-32" />
-                  </div>
-                </div>
+              <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-2xl border border-border/60 bg-background/70 p-8 text-center text-sm text-foreground/60">
+                <ImageOff className="h-8 w-8 text-foreground/40" />
+                <p>Generate a storybook to preview its pages here.</p>
               </div>
             )}
           </div>
@@ -4112,43 +4090,6 @@ function Storybooks() {
                   Generate four variations per page, rank them automatically, and update the book
                   with the best characters before building the PDF.
                 </CardDescription>
-                {activeJob && (
-                  <div className="mt-4 rounded-lg border border-primary/40 bg-primary/10 p-4">
-                    <div className="flex items-start gap-3">
-                      <Loader2 className="h-5 w-5 animate-spin text-primary mt-0.5" />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <p className="font-semibold text-foreground">
-                            {activeJob.title || 'Storybook automation'} in progress
-                          </p>
-                          <Badge variant={getJobStatusMeta(activeJob.status).variant}>
-                            {getJobStatusMeta(activeJob.status).label}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-foreground/70">
-                          Started {formatTimestamp(activeJob.createdAt)}
-                          {activeJob.estimatedSecondsRemaining && (
-                            <span> • ETA {formatEta(activeJob.estimatedSecondsRemaining)}</span>
-                          )}
-                        </p>
-                        {activeJob.progress !== undefined && (
-                          <div className="mt-2">
-                            <div className="flex items-center justify-between text-xs text-foreground/60 mb-1">
-                              <span>Progress</span>
-                              <span>{Math.round(activeJob.progress || 0)}%</span>
-                            </div>
-                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                              <div
-                                className="h-full rounded-full bg-primary transition-all"
-                                style={{ width: `${Math.max(0, Math.min(100, activeJob.progress || 0))}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
@@ -4805,11 +4746,10 @@ function Storybooks() {
             </div>
           </div>
         )}
-          </div>
-        )}
       </div>
     </>
   );
 }
 
+export default Storybooks;
 export default Storybooks;

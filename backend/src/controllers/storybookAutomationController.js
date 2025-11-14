@@ -111,7 +111,8 @@ exports.listJobs = async (req, res) => {
     }
 
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
-    const jobs = await listStorybookJobsForBook(bookId, limit);
+    const minimal = req.query.minimal === 'true';
+    const jobs = await listStorybookJobsForBook(bookId, limit, { minimal });
 
     return res.status(200).json({
       success: true,

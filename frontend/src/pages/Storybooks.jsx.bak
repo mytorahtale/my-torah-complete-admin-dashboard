@@ -1953,9 +1953,7 @@ const PageThumbnail = React.memo(
           {previewModel ? (
             <StorybookPageSvg model={previewModel} className="absolute inset-0" />
           ) : (
-            <div className="absolute inset-0 bg-muted/20 flex items-center justify-center p-2">
-              <Skeleton className="h-full w-full" />
-            </div>
+            <div className="absolute inset-0 bg-muted/20" />
           )}
         </div>
       </button>
@@ -3636,6 +3634,28 @@ function Storybooks() {
                   )}
                 </Button>
               ) : null}
+              {hasPages ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 hidden md:flex"
+                  onClick={handleDownloadPreviewAsPdf}
+                  disabled={isDownloadingPdf}
+                >
+                  {isDownloadingPdf ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="hidden lg:inline">Downloading…</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileImage className="h-4 w-4" />
+                      <span className="hidden lg:inline">Download as PDF</span>
+                    </>
+                  )}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -3689,25 +3709,7 @@ function Storybooks() {
                           className="absolute inset-0"
                         />
                       ) : (
-                        <div className="absolute inset-0 bg-muted/10 flex items-center justify-center p-8">
-                          <div className="w-full max-w-2xl space-y-4">
-                            <Skeleton className="h-8 w-3/4 mx-auto" />
-                            <Skeleton className="h-6 w-full" />
-                            <Skeleton className="h-6 w-5/6" />
-                            <Skeleton className="h-6 w-4/5" />
-                            <div className="pt-4 space-y-3">
-                              <Skeleton className="h-32 w-full" />
-                              <div className="flex gap-3">
-                                <Skeleton className="h-24 w-1/3" />
-                                <Skeleton className="h-24 w-1/3" />
-                                <Skeleton className="h-24 w-1/3" />
-                              </div>
-                            </div>
-                            <div className="pt-4">
-                              <Skeleton className="h-6 w-2/3 mx-auto" />
-                            </div>
-                          </div>
-                        </div>
+                        <div className="absolute inset-0 bg-muted/10" />
                       )}
                     </div>
 
@@ -3929,33 +3931,9 @@ function Storybooks() {
                 </div>
               </div>
             ) : (
-              <div className="flex w-full h-full items-center justify-center p-8 bg-muted/10">
-                <div className="w-full max-w-4xl space-y-6">
-                  {/* Title skeleton */}
-                  <div className="space-y-3">
-                    <Skeleton className="h-10 w-2/3 mx-auto" />
-                    <Skeleton className="h-6 w-1/2 mx-auto" />
-                  </div>
-
-                  {/* Main content area */}
-                  <div className="aspect-[842/421] w-full">
-                    <Skeleton className="h-full w-full" />
-                  </div>
-
-                  {/* Bottom info bars */}
-                  <div className="space-y-3">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-5/6" />
-                    <Skeleton className="h-4 w-4/5" />
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex gap-3 justify-center">
-                    <Skeleton className="h-10 w-32" />
-                    <Skeleton className="h-10 w-32" />
-                    <Skeleton className="h-10 w-32" />
-                  </div>
-                </div>
+              <div className="flex w-full max-w-md flex-col items-center justify-center gap-3 rounded-2xl border border-border/60 bg-background/70 p-8 text-center text-sm text-foreground/60">
+                <ImageOff className="h-8 w-8 text-foreground/40" />
+                <p>Generate a storybook to preview its pages here.</p>
               </div>
             )}
           </div>
@@ -4112,43 +4090,6 @@ function Storybooks() {
                   Generate four variations per page, rank them automatically, and update the book
                   with the best characters before building the PDF.
                 </CardDescription>
-                {activeJob && (
-                  <div className="mt-4 rounded-lg border border-primary/40 bg-primary/10 p-4">
-                    <div className="flex items-start gap-3">
-                      <Loader2 className="h-5 w-5 animate-spin text-primary mt-0.5" />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <p className="font-semibold text-foreground">
-                            {activeJob.title || 'Storybook automation'} in progress
-                          </p>
-                          <Badge variant={getJobStatusMeta(activeJob.status).variant}>
-                            {getJobStatusMeta(activeJob.status).label}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-foreground/70">
-                          Started {formatTimestamp(activeJob.createdAt)}
-                          {activeJob.estimatedSecondsRemaining && (
-                            <span> • ETA {formatEta(activeJob.estimatedSecondsRemaining)}</span>
-                          )}
-                        </p>
-                        {activeJob.progress !== undefined && (
-                          <div className="mt-2">
-                            <div className="flex items-center justify-between text-xs text-foreground/60 mb-1">
-                              <span>Progress</span>
-                              <span>{Math.round(activeJob.progress || 0)}%</span>
-                            </div>
-                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                              <div
-                                className="h-full rounded-full bg-primary transition-all"
-                                style={{ width: `${Math.max(0, Math.min(100, activeJob.progress || 0))}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-2">
@@ -4805,6 +4746,368 @@ function Storybooks() {
             </div>
           </div>
         )}
+      </div>
+    </>
+  );
+}
+
+export default Storybooks;
+                  <CardDescription>
+                    {selectedBook.description || 'No description provided.'}
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="default">{totalPages} pages</Badge>
+                  <Badge variant="outline">{totalStorybooks} generated</Badge>
+                  <Badge variant="outline">{totalConfirmedStorybooks} confirmed</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,320px)_1fr]">
+                {selectedBook.coverImage?.url ? (
+                  <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+                    <img
+                      src={selectedBook.coverImage.url}
+                      alt="Cover"
+                      className="h-56 w-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-56 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/30 text-foreground/40">
+                    <ImageOff className="h-8 w-8" />
+                  </div>
+                )}
+                <div className="space-y-4 text-sm leading-relaxed text-foreground/65">
+                  <div className="rounded-xl border border-border/60 bg-card/70 p-4">
+                    <p className="text-sm font-semibold text-foreground">What's included</p>
+                    <p className="mt-2">
+                      Storybook pulls {totalPages} curated pages with narration and backgrounds from the book setup.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-card/70 p-4">
+                    <p className="text-sm font-semibold text-foreground">Reader personalisation</p>
+                    <p className="mt-2">
+                      {selectedReader
+                        ? `Placeholders will be replaced with ${selectedReader.name}'s details.`
+                        : 'Select a reader above to replace {name} placeholders automatically.'}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Generate storybook</CardTitle>
+                <CardDescription>
+                  Build a PDF using the book&apos;s saved narration, backgrounds, and character overlays.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-foreground/65">
+                <p>
+                  Storybook pulls {totalPages} curated pages prepared in the book setup.
+                </p>
+                <p>
+                  {selectedReader
+                    ? `Personalises placeholders with ${selectedReader.name}'s details.`
+                    : 'Select a reader to replace {name} placeholders automatically.'}
+                </p>
+              </CardContent>
+              <CardFooter className="flex items-center justify-end border-t border-border/60 bg-card/60 py-4">
+                <Button
+                  onClick={handleGenerate}
+                  disabled={isGenerating || !pages.length}
+                  className="gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <BookOpen className="h-4 w-4" />
+                      Generate storybook
+                    </>
+                  )}
+                </Button>
+              </CardFooter>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <CardTitle>Generated storybooks</CardTitle>
+                  <CardDescription>
+                    Filter, confirm, or download the latest PDFs for this book.
+                  </CardDescription>
+                </div>
+                <Badge variant="outline">{totalStorybooks} ready</Badge>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="relative w-full sm:max-w-xs">
+                      <Input
+                        value={librarySearchTerm}
+                        onChange={(event) => setLibrarySearchTerm(event.target.value)}
+                        placeholder="Search by title or reader..."
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {READY_STATUS_OPTIONS.map((option) => (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          size="sm"
+                          variant={libraryStatusFilter === option.value ? 'default' : 'outline'}
+                          onClick={() => setLibraryStatusFilter(option.value)}
+                        >
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs uppercase tracking-wide text-foreground/50">
+                      Page size
+                    </Label>
+                    <Select
+                      value={String(libraryPageSize)}
+                      onValueChange={(value) => setLibraryPageSize(Number(value))}
+                    >
+                      <SelectTrigger className="h-9 w-[100px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LIBRARY_PAGE_SIZE_OPTIONS.map((size) => (
+                          <SelectItem key={size} value={String(size)}>
+                            {size}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {paginatedReadyLibrary.length ? (
+                  <div className="grid gap-3">
+                    {paginatedReadyLibrary.map((entry) => {
+                      const { asset, matchingSplit, id } = entry;
+                      const assetIdentifier = resolveAssetId(asset);
+                      const isConfirming = confirmingAssetId === assetIdentifier;
+                      const pageTotal = asset.pageCount || pages.length;
+                      const sizeLabel = asset.size
+                        ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
+                        : 'Size unknown';
+                      const generatedLabel = asset.createdAt
+                        ? new Date(asset.createdAt).toLocaleString()
+                        : 'recently';
+                      const splitConfirmedLabel =
+                        matchingSplit &&
+                        new Date(
+                          matchingSplit.confirmedAt ||
+                            matchingSplit.updatedAt ||
+                            matchingSplit.createdAt ||
+                            Date.now()
+                        ).toLocaleString();
+                      const statusLabel = matchingSplit ? 'Split ready' : 'Awaiting confirmation';
+                      const statusVariant = matchingSplit ? 'success' : 'outline';
+                      const readerProfile = asset.readerId
+                        ? users.find((user) => user._id === String(asset.readerId))
+                        : null;
+                      const readerDisplayName =
+                        asset.readerName || readerProfile?.name || '—';
+                      const readerDisplayEmail = readerProfile?.email || '—';
+                      const readerDisplayGender = normaliseGenderValue(
+                        asset.readerGender || readerProfile?.gender || ''
+                      );
+                      const readerGenderText = readerDisplayGender
+                        ? readerDisplayGender.charAt(0).toUpperCase() + readerDisplayGender.slice(1)
+                        : '—';
+                      return (
+                        <div
+                          key={id}
+                          className="rounded-xl border border-border/70 bg-card/70 p-4"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="space-y-1.5">
+                              <p className="font-semibold text-foreground/85">
+                                {asset.title || 'Storybook'}
+                              </p>
+                              <p className="text-xs text-foreground/50">
+                                {pageTotal} pages · {sizeLabel}
+                              </p>
+                              <p className="text-xs text-foreground/45">
+                                Generated {generatedLabel}
+                              </p>
+                              {matchingSplit ? (
+                                <p className="text-xs text-emerald-500">
+                                  Split confirmed {splitConfirmedLabel || 'recently'}
+                                </p>
+                              ) : null}
+                              {asset.trainingModelName || asset.trainingName ? (
+                                <p className="text-xs text-foreground/50">
+                                  {asset.trainingModelName || asset.trainingName}
+                                </p>
+                              ) : null}
+                              <div className="pt-1 text-xs text-foreground/55 space-y-0.5">
+                                <p>Reader: {readerDisplayName}</p>
+                                <p>Email: {readerDisplayEmail}</p>
+                                <p>Gender: {readerGenderText}</p>
+                              </div>
+                            </div>
+                            <Badge variant={statusVariant}>{statusLabel}</Badge>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={matchingSplit ? 'secondary' : 'default'}
+                              className="gap-1"
+                              disabled={isConfirming}
+                              onClick={() => handleConfirmStorybook(asset)}
+                            >
+                              {isConfirming ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  {matchingSplit ? 'Regenerating...' : 'Confirming...'}
+                                </>
+                              ) : matchingSplit ? (
+                                <>
+                                  <RefreshCw className="h-4 w-4" />
+                                  Regenerate split
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="h-4 w-4" />
+                                  Confirm
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="gap-1"
+                              onClick={() => handleOpenAssetViewer(asset)}
+                            >
+                              <Eye className="h-4 w-4" />
+                              View pages
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => window.open(asset.url, '_blank')}
+                            >
+                              <Download className="h-4 w-4" />
+                              Download PDF
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-foreground/55">
+                    No storybooks match your filters yet.
+                  </div>
+                )}
+              </CardContent>
+              <CardFooter className="flex flex-col gap-3 border-t border-border/60 bg-card/60 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-foreground/55">
+                  {totalReadyItems
+                    ? `Showing ${readyRangeStart}-${readyRangeEnd} of ${totalReadyItems}`
+                    : 'No storybooks yet.'}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setLibraryPage((prev) => Math.max(1, prev - 1))}
+                    disabled={libraryPage <= 1 || totalReadyItems === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-foreground/55">
+                    Page {Math.min(libraryPage, totalReadyPages)} of {totalReadyPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setLibraryPage((prev) => Math.min(totalReadyPages, prev + 1))}
+                    disabled={libraryPage >= totalReadyPages || totalReadyItems === 0}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardFooter>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle>Confirmed storybooks</CardTitle>
+                  <CardDescription>
+                    Split PDFs are stored and ready whenever you need them.
+                  </CardDescription>
+                </div>
+                <Badge variant="success">{totalConfirmedStorybooks} confirmed</Badge>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {splitAssets.length ? (
+                  splitAssets.map((asset) => (
+                    <div
+                      key={asset._id || asset.key}
+                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-emerald-900">
+                            {asset.title || 'Confirmed storybook'}
+                          </p>
+                          <p className="text-xs text-emerald-800/80">
+                            {(asset.pageCount || pages.length)} pages ·{' '}
+                            {asset.size
+                              ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
+                              : 'Size unknown'}
+                          </p>
+                          <div className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>
+                              Confirmed{' '}
+                              {asset.confirmedAt
+                                ? new Date(asset.confirmedAt).toLocaleString()
+                                : new Date(asset.updatedAt || asset.createdAt || Date.now()).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => window.open(asset.url, '_blank')}
+                        >
+                          <Download className="h-4 w-4" />
+                          Download PDF
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/10 p-6 text-center text-sm text-emerald-800/80">
+                    Confirm a storybook to generate a split PDF and keep it ready here.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>

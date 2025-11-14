@@ -231,38 +231,43 @@ function drawHeroTitle(ctx, childName, width, height) {
   const topLine = `${safeName}'S TRIP`;
   const bottomLine = 'TO ISRAEL';
 
-  const textX = width * 0.75;
-  const bottomMargin = 250;
-  const topY = height - bottomMargin - 280;
-  const bottomY = topY + 280;
+  // Move towards center from 75% to 70%
+  const textX = width * 0.70;
+  // Move titles up from bottom: increased from 400 to 700
+  const bottomMargin = 700;
+  // Reduced font sizes: 280 -> 240, 200 -> 170
+  const topFontSize = 240;
+  const bottomFontSize = 170;
+  const topY = height - bottomMargin - topFontSize;
+  const bottomY = topY + topFontSize;
 
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
 
-  const topGradient = ctx.createLinearGradient(0, topY - 280, 0, topY);
+  const topGradient = ctx.createLinearGradient(0, topY - topFontSize, 0, topY);
   topGradient.addColorStop(0, '#FFE082');
   topGradient.addColorStop(0.3, '#FFD54F');
   topGradient.addColorStop(0.7, '#FFB300');
   topGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 280px "CanvaSans"';
+  ctx.font = `700 ${topFontSize}px "CanvaSans"`;
   ctx.strokeStyle = '#1565C0';
-  ctx.lineWidth = 35;
+  ctx.lineWidth = 30; // Reduced from 35
   ctx.strokeText(topLine, textX, topY);
   ctx.fillStyle = topGradient;
   ctx.fillText(topLine, textX, topY);
 
-  const bottomGradient = ctx.createLinearGradient(0, bottomY - 200, 0, bottomY);
+  const bottomGradient = ctx.createLinearGradient(0, bottomY - bottomFontSize, 0, bottomY);
   bottomGradient.addColorStop(0, '#FFE082');
   bottomGradient.addColorStop(0.3, '#FFD54F');
   bottomGradient.addColorStop(0.7, '#FFB300');
   bottomGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 200px "CanvaSans"';
+  ctx.font = `700 ${bottomFontSize}px "CanvaSans"`;
   ctx.strokeStyle = '#1565C0';
-  ctx.lineWidth = 28;
+  ctx.lineWidth = 24; // Reduced from 28
   ctx.strokeText(bottomLine, textX, bottomY);
   ctx.fillStyle = bottomGradient;
   ctx.fillText(bottomLine, textX, bottomY);
@@ -280,22 +285,9 @@ async function renderCoverToCanvas({
 }) {
   registerCoverFonts();
 
-  // Add 0.75 inch margin on all sides at 300 DPI (print quality)
-  // 0.75 inch × 300 DPI = 225 pixels
-  const MARGIN = 225;
-  const canvasWidth = pageWidth + (MARGIN * 2);
-  const canvasHeight = pageHeight + (MARGIN * 2);
-
-  const canvas = createCanvas(canvasWidth, canvasHeight);
+  // Create canvas without margin - draw directly at page size
+  const canvas = createCanvas(pageWidth, pageHeight);
   const ctx = canvas.getContext('2d');
-
-  // Fill with white background (margin area)
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-  // Translate context to add margin offset to all drawing operations
-  ctx.save();
-  ctx.translate(MARGIN, MARGIN);
 
   // Draw black background for content area
   ctx.fillStyle = '#000';
@@ -328,13 +320,15 @@ async function renderCoverToCanvas({
   }
 
   if (characterImage) {
-    const baseWidthRatio = 0.4 * 1.1;
-    const baseHeightRatio = 0.8 * 1.1;
+    // Reduced size: 0.4 -> 0.35 for width, 0.8 -> 0.7 for height
+    const baseWidthRatio = 0.35 * 1.1;
+    const baseHeightRatio = 0.7 * 1.1;
     const charAreaWidth = pageWidth * baseWidthRatio;
     const charAreaHeight = pageHeight * baseHeightRatio;
-    const horizontalMargin = pageWidth * 0.02;
-    const bottomMargin = pageHeight * 0.02;
-    const areaX = pageWidth - charAreaWidth - horizontalMargin;
+    const bottomMargin = 300; // Move character down a little (reduced from 400 to 300)
+    // Center character horizontally on right side (behind text at 70%)
+    const rightSideCenter = pageWidth * 0.70;
+    const areaX = rightSideCenter - (charAreaWidth / 2);
     const areaY = Math.max(-pageHeight * 0.02, pageHeight - charAreaHeight - bottomMargin);
 
     const charAspectRatio = characterImage.width / characterImage.height;
@@ -363,12 +357,13 @@ async function renderCoverToCanvas({
     footer: cover?.footer || '',
   });
 
-  const textX = pageWidth * 0.06;
-  const textStartY = pageHeight * 0.22;
+  // 2 inches (600px) from left edge
+  const textX = 600;
   const textMaxWidth = pageWidth * 0.32;
 
-  const textGroups = layoutText(ctx, segments, textX, textStartY, textMaxWidth);
-  const beforeLayout = layoutLines(ctx, textGroups.before, textX, textStartY);
+  // First pass: calculate layout at temporary Y position to get total height
+  const textGroups = layoutText(ctx, segments, textX, 0, textMaxWidth);
+  const tempBeforeLayout = layoutLines(ctx, textGroups.before, textX, 0);
 
   const blurPaddingX = pageWidth * 0.03;
 
@@ -388,6 +383,24 @@ async function renderCoverToCanvas({
   const qrSize = qrImage
     ? Math.min(pageHeight * 0.1, Math.max(pageWidth * 0.06, 100))
     : 0;
+
+  // Calculate temporary after layout to get total content height
+  const tempQrY = qrImage ? tempBeforeLayout.bottom + qrGapTop : tempBeforeLayout.bottom;
+  const tempAfterLayout = layoutLines(
+    ctx,
+    textGroups.after,
+    textX,
+    tempQrY + (qrImage ? qrSize + qrGapBottom : 0)
+  );
+
+  // Calculate total content height
+  const totalContentHeight = tempAfterLayout.bottom - tempBeforeLayout.top;
+
+  // Center vertically: calculate centered starting Y position
+  const textStartY = (pageHeight - totalContentHeight) / 2;
+
+  // Second pass: layout with centered Y position
+  const beforeLayout = layoutLines(ctx, textGroups.before, textX, textStartY);
 
   let blurX = Math.max(0, textX - blurPaddingX);
   const baseMaxLineWidth = Math.max(
@@ -540,9 +553,6 @@ async function renderCoverToCanvas({
   }
 
   drawHeroTitle(ctx, childName, pageWidth, pageHeight);
-
-  // Restore context (end margin offset)
-  ctx.restore();
 
   return canvas;
 }

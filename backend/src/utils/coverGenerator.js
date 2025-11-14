@@ -211,7 +211,7 @@ function layoutTextLines(ctx, lines, startX, startY) {
   return { lines: positioned, top, bottom, cursor: cursorY };
 }
 
-function drawHeroTitle(ctx, childName, width, height, overrides = {}) {
+function drawHeroTitle(ctx, childName, width, height, overrides = {}, insetMargin = 0) {
   const safeName =
     childName && childName.trim() ? childName.trim().toUpperCase() : 'YOUR CHILD';
   const topLine =
@@ -223,38 +223,43 @@ function drawHeroTitle(ctx, childName, width, height, overrides = {}) {
       ? overrides.subtitle.trim()
       : 'TO ISRAEL';
 
-  const textX = width * 0.75;
-  const bottomMargin = 250;
-  const topY = height - bottomMargin - 280;
-  const bottomY = topY + 280;
+  // Move towards center from 75% to 70%
+  const textX = width * 0.70;
+  // Move titles up from bottom: increased from 400 to 700
+  const bottomMargin = 700 + insetMargin;
+  // Reduced font sizes: 280 -> 240, 200 -> 170
+  const topFontSize = 240;
+  const bottomFontSize = 170;
+  const topY = height - bottomMargin - topFontSize;
+  const bottomY = topY + topFontSize;
 
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
 
-  const topGradient = ctx.createLinearGradient(0, topY - 280, 0, topY);
+  const topGradient = ctx.createLinearGradient(0, topY - topFontSize, 0, topY);
   topGradient.addColorStop(0, '#FFE082');
   topGradient.addColorStop(0.3, '#FFD54F');
   topGradient.addColorStop(0.7, '#FFB300');
   topGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 280px "CanvaSans"';
+  ctx.font = `700 ${topFontSize}px "CanvaSans"`;
   ctx.strokeStyle = '#1565C0';
-  ctx.lineWidth = 35;
+  ctx.lineWidth = 30; // Reduced from 35
   ctx.strokeText(topLine, textX, topY);
   ctx.fillStyle = topGradient;
   ctx.fillText(topLine, textX, topY);
 
-  const bottomGradient = ctx.createLinearGradient(0, bottomY - 200, 0, bottomY);
+  const bottomGradient = ctx.createLinearGradient(0, bottomY - bottomFontSize, 0, bottomY);
   bottomGradient.addColorStop(0, '#FFE082');
   bottomGradient.addColorStop(0.3, '#FFD54F');
   bottomGradient.addColorStop(0.7, '#FFB300');
   bottomGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 200px "CanvaSans"';
+  ctx.font = `700 ${bottomFontSize}px "CanvaSans"`;
   ctx.strokeStyle = '#1565C0';
-  ctx.lineWidth = 28;
+  ctx.lineWidth = 24; // Reduced from 28
   ctx.strokeText(bottomLine, textX, bottomY);
   ctx.fillStyle = bottomGradient;
   ctx.fillText(bottomLine, textX, bottomY);
@@ -286,7 +291,15 @@ async function generateCoverPage(options) {
     rightSide = {},
     qrCode = null,
     childName = '',
+    usePreviewMargin = false, // NEW: Flag for 1 inch preview margin
   } = options;
+
+  // 1 inch margin at 300 DPI for new 3000x5642px background (only for preview)
+  const INSET_MARGIN = usePreviewMargin ? 300 : 0;
+
+  if (usePreviewMargin) {
+    console.log('🎨 new 1inch away - Preview mode with 1 inch margin enabled');
+  }
 
   registerCoverFonts();
 
@@ -295,22 +308,9 @@ async function generateCoverPage(options) {
   const width = bgImage.width;
   const height = bgImage.height;
 
-  // Add 0.75 inch margin on all sides at 300 DPI (print quality)
-  // 0.75 inch × 300 DPI = 225 pixels
-  const MARGIN = 225;
-  const canvasWidth = width + (MARGIN * 2);
-  const canvasHeight = height + (MARGIN * 2);
-
-  const canvas = createCanvas(canvasWidth, canvasHeight);
+  // Create canvas without margin - draw directly at background image size
+  const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
-
-  // Fill with white background (margin area)
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-  // Translate context to add margin offset to all drawing operations
-  ctx.save();
-  ctx.translate(MARGIN, MARGIN);
 
   // Draw background image
   ctx.drawImage(bgImage, 0, 0, width, height);
@@ -349,13 +349,15 @@ async function generateCoverPage(options) {
   }
 
   if (charImage) {
-    const baseWidthRatio = 0.4 * 1.1;
-    const baseHeightRatio = 0.8 * 1.1;
+    // Reduced size: 0.4 -> 0.35 for width, 0.8 -> 0.7 for height
+    const baseWidthRatio = 0.35 * 1.1;
+    const baseHeightRatio = 0.7 * 1.1;
     const charAreaWidth = width * baseWidthRatio;
     const charAreaHeight = height * baseHeightRatio;
-    const horizontalMargin = width * 0.02;
-    const bottomMargin = height * 0.02;
-    const areaX = width - charAreaWidth - horizontalMargin;
+    const bottomMargin = 300; // Move character down a little (reduced from 400 to 300)
+    // Center character horizontally on right side (behind text at 70%)
+    const rightSideCenter = width * 0.70;
+    const areaX = rightSideCenter - (charAreaWidth / 2);
     const areaY = Math.max(-height * 0.02, height - charAreaHeight - bottomMargin);
 
     const charAspectRatio = charImage.width / charImage.height;
@@ -445,20 +447,37 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
     });
   }
 
-  // Calculate text layout
-  const textX = width * 0.06;
-  const textStartY = height * 0.22;
+  // Calculate text layout - 2 inches (600px) from left edge
+  const textX = 600;
   const textMaxWidth = width * 0.32;
 
+  // First pass: calculate layout at temporary Y position to get total height
   const textGroups = buildWrappedLines(ctx, textSegments, textMaxWidth);
-  const beforeLayout = layoutTextLines(ctx, textGroups.before, textX, textStartY);
+  const tempBeforeLayout = layoutTextLines(ctx, textGroups.before, textX, 0);
 
-  // QR code dimensions and layout
+  // QR code dimensions
   const qrSize = qrImage ? Math.min(height * 0.10, Math.max(width * 0.06, 100)) : 0;
   const qrGapTop = qrImage ? 50 : 0;
   const qrGapBottom = qrImage ? 50 : 0;
-  const qrY = qrImage ? beforeLayout.bottom + qrGapTop : beforeLayout.bottom;
 
+  // Calculate temporary after layout to get total content height
+  const tempQrY = qrImage ? tempBeforeLayout.bottom + qrGapTop : tempBeforeLayout.bottom;
+  const tempAfterLayout = layoutTextLines(
+    ctx,
+    textGroups.after,
+    textX,
+    tempQrY + (qrImage ? qrSize + qrGapBottom : 0)
+  );
+
+  // Calculate total content height
+  const totalContentHeight = tempAfterLayout.bottom - tempBeforeLayout.top;
+
+  // Center vertically: calculate centered starting Y position
+  const textStartY = (height - totalContentHeight) / 2;
+
+  // Second pass: layout with centered Y position
+  const beforeLayout = layoutTextLines(ctx, textGroups.before, textX, textStartY);
+  const qrY = qrImage ? beforeLayout.bottom + qrGapTop : beforeLayout.bottom;
   const afterLayout = layoutTextLines(
     ctx,
     textGroups.after,
@@ -608,10 +627,7 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
     ctx.drawImage(qrImage, qrX, qrY, qrSize, qrSize);
   }
 
-  drawHeroTitle(ctx, childName, width, height, rightSide);
-
-  // Restore context (end margin offset)
-  ctx.restore();
+  drawHeroTitle(ctx, childName, width, height, rightSide, INSET_MARGIN);
 
   return canvas.toBuffer('image/png');
 }

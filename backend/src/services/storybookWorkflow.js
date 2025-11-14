@@ -1889,7 +1889,8 @@ const getStorybookJobById = async (jobId) => {
   return emitJob(job);
 };
 
-const listStorybookJobsForBook = async (bookId, limit = 10) => {
+const listStorybookJobsForBook = async (bookId, limit = 10, options = {}) => {
+  const { minimal = false } = options;
   const jobs = await StorybookJob.find({ bookId })
     .sort({ createdAt: -1 })
     .limit(limit);
@@ -1897,6 +1898,25 @@ const listStorybookJobsForBook = async (bookId, limit = 10) => {
     const snapshot = job.toObject({ depopulate: true });
     snapshot.progress = computeJobProgress(snapshot);
     snapshot.estimatedSecondsRemaining = computeEtaSeconds(snapshot, snapshot.progress);
+
+    // In minimal mode, exclude large arrays to reduce payload size
+    if (minimal) {
+      const pageCount = Array.isArray(snapshot.pages) ? snapshot.pages.length : 0;
+      delete snapshot.pages;
+      delete snapshot.events;
+      delete snapshot.logs;
+      snapshot.pageCount = pageCount;
+
+      // Also strip pages array from pdfAsset if present
+      if (snapshot.pdfAsset && Array.isArray(snapshot.pdfAsset.pages)) {
+        const assetPageCount = snapshot.pdfAsset.pages.length;
+        delete snapshot.pdfAsset.pages;
+        if (!snapshot.pdfAsset.pageCount) {
+          snapshot.pdfAsset.pageCount = assetPageCount;
+        }
+      }
+    }
+
     return snapshot;
   });
 };

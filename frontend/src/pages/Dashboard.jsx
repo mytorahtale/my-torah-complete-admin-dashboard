@@ -148,12 +148,11 @@ function Dashboard() {
 
   const bookStats = useMemo(() => {
     const stats = overview?.stats?.books || {};
-    const generationSucceeded = overview?.stats?.generations?.succeeded || 0;
     return {
       total: stats.total || 0,
       active: stats.active || 0,
       inactive: stats.inactive || 0,
-      generated: generationSucceeded,
+      generated: stats.total || 0, // Books generated = total books
       avgPages: stats.averagePages || 0,
     };
   }, [overview]);
@@ -213,7 +212,7 @@ function Dashboard() {
       },
       generatedBooks: {
         value: bookStats.generated,
-        delta: generationStats.successRate ? `${formatPercent(generationStats.successRate)} success` : null,
+        delta: bookStats.active ? `${bookStats.active} active` : null,
       },
       totalUsers: {
         value: userStats.total,

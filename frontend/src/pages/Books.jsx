@@ -2408,12 +2408,10 @@ const handleRemovePageImage = (index) => {
               : Array.isArray(book.pages)
               ? book.pages.length
               : 0;
-        const hasDetailedPages = Array.isArray(book.pages) && book.pages.length > 0;
-        const highlightedPageCount = hasDetailedPages
-          ? book.pages.filter(
-              (page) => page.backgroundImage?.url || page.characterImage?.url
-            ).length
-          : 0;
+          const highlightedPageCount = typeof book.highlightedPageCount === 'number'
+            ? book.highlightedPageCount
+            : 0;
+          const hasDetailedPages = highlightedPageCount > 0;
           const isLoadingDetails = loadingBookDetailId === book._id;
 
           return (
