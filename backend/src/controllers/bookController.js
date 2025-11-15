@@ -2709,6 +2709,17 @@ exports.regenerateStorybookPdf = async (req, res) => {
       }
     }
 
+    // CRITICAL FIX: Reload book to get latest cover/dedication candidate selections
+    // The original book object was loaded before candidate selections were applied
+    // Cover/dedication pages need the latest characterImage/kidImage values from database
+    const refreshedBook = await Book.findById(bookId);
+    if (!refreshedBook) {
+      return res.status(404).json({
+        success: false,
+        message: 'Book not found when reloading for cover/dedication pages',
+      });
+    }
+
     const frontMatterPages = [];
 
     // Find cover and dedication page data from the existing PDF to preserve candidates
@@ -2722,7 +2733,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
     } : null;
 
     const coverFrontMatter = buildCoverPageContent({
-      book,
+      book: refreshedBook, // Use refreshed book with latest candidate selections
       readerName,
       readerGender,
       storyPages,
@@ -2742,7 +2753,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
     } : null;
 
     const dedicationFrontMatter = buildDedicationPageContent({
-      book,
+      book: refreshedBook, // Use refreshed book with latest candidate selections
       readerName,
       readerGender,
       readerSecondTitle,
