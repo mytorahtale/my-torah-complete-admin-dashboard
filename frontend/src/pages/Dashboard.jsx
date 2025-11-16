@@ -617,6 +617,10 @@ function Dashboard() {
           </div>
         </article>
       </section>
+
+      <div className="mt-8 text-center">
+        <p className="text-xs text-muted-foreground">v1.0</p>
+      </div>
     </div>
   );
 }
