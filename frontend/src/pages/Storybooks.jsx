@@ -761,7 +761,7 @@ const renderCoverPreview = async (canvas, model, signal) => {
     }
 
     const drawX = areaX + (charAreaWidth - drawWidth) / 2;
-    const drawY = areaY + (charAreaHeight - drawHeight);
+    const drawY = areaY + (charAreaHeight - drawHeight) + 20;
     ctx.drawImage(characterImage, drawX, drawY, drawWidth, drawHeight);
   }
 

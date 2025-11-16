@@ -14,15 +14,22 @@ const { generateDedicationPage } = require('./dedicationGenerator');
 const replicate = new Replicate();
 
 // PDF page dimensions (72 DPI - PDF standard points system)
-// All pages: 16:8 ratio (2:1)
-// Cover page stays 16:8, story pages split into two 8x8 squares during confirm
+// Story pages: 16:8 ratio (2:1)
 const PAGE_WIDTH = 1152; // 16 inches × 72 points/inch = 1152 points
 const PAGE_HEIGHT = 576; // 8 inches × 72 points/inch = 576 points
 
+// Cover page: 18.8:10 ratio (custom size for character images)
+const COVER_PAGE_WIDTH = 1354; // 18.8 inches × 72 points/inch ≈ 1354 points
+const COVER_PAGE_HEIGHT = 720; // 10 inches × 72 points/inch = 720 points
+
 // Canvas dimensions for high-resolution image generation (300 DPI for print quality)
-// All pages: 16:8 ratio at 300 DPI
+// Story pages: 16:8 ratio at 300 DPI
 const CANVAS_WIDTH = 4800; // 16 inches × 300 DPI = 4800 pixels
 const CANVAS_HEIGHT = 2400; // 8 inches × 300 DPI = 2400 pixels
+
+// Cover page: 18.8:10 ratio at 300 DPI
+const COVER_CANVAS_WIDTH = 5640; // 18.8 inches × 300 DPI = 5640 pixels
+const COVER_CANVAS_HEIGHT = 3000; // 10 inches × 300 DPI = 3000 pixels
 
 const CHARACTER_MAX_WIDTH_RATIO = 0.4;
 const CHARACTER_MAX_HEIGHT_RATIO = 0.8;
@@ -832,10 +839,14 @@ async function generateStorybookPdf({ title, pages }) {
 
   for (let index = 0; index < pagesToRender.length; index += 1) {
     const pageData = pagesToRender[index] || {};
-    const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     const pageType = pageData.pageType || 'story';
-    pageData.characterPositionResolved = 'auto';
     const isCoverPage = pageType === 'cover';
+
+    // Use cover page dimensions for cover, regular dimensions for other pages
+    const pageWidth = isCoverPage ? COVER_PAGE_WIDTH : PAGE_WIDTH;
+    const pageHeight = isCoverPage ? COVER_PAGE_HEIGHT : PAGE_HEIGHT;
+    const page = pdfDoc.addPage([pageWidth, pageHeight]);
+    pageData.characterPositionResolved = 'auto';
     const isDedicationPage = pageType === 'dedication';
     const positionPreferenceRaw =
       typeof pageData.characterPosition === 'string'
@@ -885,8 +896,8 @@ async function generateStorybookPdf({ title, pages }) {
             page.drawImage(coverImage, {
               x: 0,
               y: 0,
-              width: PAGE_WIDTH,
-              height: PAGE_HEIGHT,
+              width: pageWidth,
+              height: pageHeight,
             });
             renderedPageBuffers.push({ index, type: 'cover', buffer: coverBuffer });
             continue;
@@ -939,8 +950,8 @@ async function generateStorybookPdf({ title, pages }) {
         : pageData.text || '';
 
       const coverBuffer = await generateCoverImage({
-        pageWidth: CANVAS_WIDTH,
-        pageHeight: CANVAS_HEIGHT,
+        pageWidth: COVER_CANVAS_WIDTH,
+        pageHeight: COVER_CANVAS_HEIGHT,
         backgroundBuffer,
         characterBuffer,
         qrBuffer,
@@ -954,8 +965,8 @@ async function generateStorybookPdf({ title, pages }) {
       page.drawImage(coverImage, {
         x: 0,
         y: 0,
-        width: PAGE_WIDTH,
-        height: PAGE_HEIGHT,
+        width: pageWidth,
+        height: pageHeight,
       });
       renderedPageBuffers.push({ index, type: 'cover', buffer: coverBuffer });
       continue;
@@ -1014,8 +1025,8 @@ async function generateStorybookPdf({ title, pages }) {
             page.drawImage(dedicationImage, {
               x: 0,
               y: 0,
-              width: PAGE_WIDTH,
-              height: PAGE_HEIGHT,
+              width: pageWidth,
+              height: pageHeight,
             });
             renderedPageBuffers.push({ index, type: 'dedication', buffer: dedicationBuffer });
             dedicationHandled = true;
@@ -1068,8 +1079,8 @@ async function generateStorybookPdf({ title, pages }) {
         page.drawImage(backgroundImage, {
           x: 0,
           y: 0,
-          width: PAGE_WIDTH,
-          height: PAGE_HEIGHT,
+          width: pageWidth,
+          height: pageHeight,
         });
         hasBackground = true;
       }
@@ -1080,8 +1091,8 @@ async function generateStorybookPdf({ title, pages }) {
       page.drawRectangle({
         x: 0,
         y: 0,
-        width: PAGE_WIDTH,
-        height: PAGE_HEIGHT,
+        width: pageWidth,
+        height: pageHeight,
         color: rgb(1, 1, 1),
       });
     }

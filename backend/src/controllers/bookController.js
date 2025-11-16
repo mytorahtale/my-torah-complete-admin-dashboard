@@ -2942,9 +2942,12 @@ exports.confirmStorybookPdf = async (req, res) => {
     const pageCount = sourcePdf.getPageCount();
     const originalPageCount = pageCount; // Store for metadata
 
-    // 0.125 inch bleed = 9 points (72 points per inch)
-    const bleedSize = 0.125 * 72;
-    const targetSquareSize = 8 * 72; // 8 inches = 576 points
+    // Content size: 8×8 inches = 576 points (72 points per inch)
+    const contentSize = 8 * 72; // 576 points
+    // Bleed: 0.125 inch on each side (outside content area)
+    const bleedSize = 0.125 * 72; // 9 points per side
+    // Final canvas: 8.25×8.25 inches = 594 points (8 + 0.125 + 0.125)
+    const canvasSize = contentSize + (bleedSize * 2); // 594 points
 
     for (let i = 0; i < pageCount; i++) {
       const sourcePage = sourcePdf.getPage(i);
@@ -2958,51 +2961,47 @@ exports.confirmStorybookPdf = async (req, res) => {
         continue;
       }
 
-      // All other pages: 16:8 ratio - split into two 8x8 squares with white bleed margin
+      // All other pages: 16:8 ratio - split into two 8×8 squares with 0.125" bleed outside
       const embeddedPage = await splitPdf.embedPage(sourcePage);
 
-      // Content size after accounting for bleed on all sides
-      // 8 inches - (0.125" bleed × 2 sides) = 7.75 inches = 558 points
-      const contentSize = targetSquareSize - (bleedSize * 2);
+      // LEFT HALF: Create 8.25×8.25 canvas with full 8×8 content + 0.125" white bleed outside
+      const leftPage = splitPdf.addPage([canvasSize, canvasSize]);
 
-      // Scale factor to fit content with bleed margin
-      const scaleFactor = contentSize / targetSquareSize;
-      const scaledWidth = originalWidth * scaleFactor;
-      const scaledHeight = originalHeight * scaleFactor;
-
-      // LEFT HALF: Create 8x8 square canvas, draw scaled left half with white bleed margin
-      const leftPage = splitPdf.addPage([targetSquareSize, targetSquareSize]);
+      // Draw left half of page at full 8×8 size, centered with bleed margin
       leftPage.drawPage(embeddedPage, {
-        x: bleedSize,
-        y: bleedSize,
-        width: scaledWidth,
-        height: scaledHeight,
+        x: bleedSize, // 0.125" margin on left
+        y: bleedSize, // 0.125" margin on bottom
+        width: originalWidth,
+        height: originalHeight,
       });
-      // Cover the right margin area with white to hide any overflow from the right half
+
+      // Cover the right margin area with white to hide overflow from right half
       leftPage.drawRectangle({
         x: bleedSize + contentSize,
         y: 0,
         width: bleedSize,
-        height: targetSquareSize,
+        height: canvasSize,
         color: rgb(1, 1, 1),
       });
 
-      // RIGHT HALF: Create 8x8 square canvas, draw scaled right half with white bleed margin
-      const rightPage = splitPdf.addPage([targetSquareSize, targetSquareSize]);
-      // Shift left by half the scaled width to show the right half
-      const halfScaledWidth = scaledWidth / 2;
+      // RIGHT HALF: Create 8.25×8.25 canvas with full 8×8 content + 0.125" white bleed outside
+      const rightPage = splitPdf.addPage([canvasSize, canvasSize]);
+
+      // Shift left by half the width to show right half, centered with bleed margin
+      const halfWidth = originalWidth / 2;
       rightPage.drawPage(embeddedPage, {
-        x: bleedSize - halfScaledWidth,
-        y: bleedSize,
-        width: scaledWidth,
-        height: scaledHeight,
+        x: bleedSize - halfWidth, // Shift to show right half
+        y: bleedSize, // 0.125" margin on bottom
+        width: originalWidth,
+        height: originalHeight,
       });
-      // Cover the left margin area with white to hide any overflow from the left half
+
+      // Cover the left margin area with white to hide overflow from left half
       rightPage.drawRectangle({
         x: 0,
         y: 0,
         width: bleedSize,
-        height: targetSquareSize,
+        height: canvasSize,
         color: rgb(1, 1, 1),
       });
     }
@@ -3042,10 +3041,12 @@ exports.confirmStorybookPdf = async (req, res) => {
         originalPageCount,
         generatedPageCount: splitPdf.getPageCount(),
         preservedCoverPage: true,
+        preservedCoverSize: '18.8x10 inches',
         resized: true,
-        targetSize: '8x8 inches',
-        bleedSize: '0.125 inches',
+        contentSize: '8x8 inches',
+        bleedSize: '0.125 inches (outside content)',
         finalSize: '8.25x8.25 inches',
+        printDPI: 300,
       },
       pages: (pdfAsset.pages || []).map((page) => cloneDocument(page)),
     };
