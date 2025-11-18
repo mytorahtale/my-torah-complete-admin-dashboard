@@ -31,11 +31,18 @@ const CANVAS_HEIGHT = 2400; // 8 inches × 300 DPI = 2400 pixels
 const COVER_CANVAS_WIDTH = 5640; // 18.8 inches × 300 DPI = 5640 pixels
 const COVER_CANVAS_HEIGHT = 3000; // 10 inches × 300 DPI = 3000 pixels
 
+// Story page 0.125 inch safety margins (37.5 pixels at 300 DPI, 9 points at 72 DPI)
+const STORY_MARGIN_CANVAS = 37.5; // 0.125 inches × 300 DPI
+const STORY_MARGIN_PDF = 9; // 0.125 inches × 72 DPI (used in PDF coordinate system)
+
+// Text/blur box inset from edges - moves content more toward center while respecting margins
+const TEXT_INSET = 72; // 1 inch inset for text/blur box positioning
+
 const CHARACTER_MAX_WIDTH_RATIO = 0.4;
 const CHARACTER_MAX_HEIGHT_RATIO = 0.8;
 const TEXT_BLOCK_WIDTH = 300;
 const TEXT_BLOCK_WIDTH_RATIO = 0.35;
-const TEXT_MARGIN = 40;
+const TEXT_MARGIN = STORY_MARGIN_PDF; // 0.125 inch safety margin for text positioning
 const FONT_SIZE = 16;
 const LINE_HEIGHT = FONT_SIZE * 1.4;
 const TEXT_BASELINE_OFFSET = 18;
@@ -861,8 +868,9 @@ async function generateStorybookPdf({ title, pages }) {
     pageData.characterPositionResolved = isCharacterOnRight ? 'right' : 'left';
     let charWidth = 0;
     let charHeight = 0;
-    let charX = isCharacterOnRight ? PAGE_WIDTH - PAGE_WIDTH * CHARACTER_MAX_WIDTH_RATIO : 0;
-    const charY = 0;
+    // Apply 0.125" margin (STORY_MARGIN_PDF) for character positioning
+    let charX = isCharacterOnRight ? PAGE_WIDTH - PAGE_WIDTH * CHARACTER_MAX_WIDTH_RATIO - STORY_MARGIN_PDF : STORY_MARGIN_PDF;
+    const charY = STORY_MARGIN_PDF;
     const childName = pageData.childName || '';
 
     if (isCoverPage) {
@@ -1208,7 +1216,8 @@ async function generateStorybookPdf({ title, pages }) {
             charWidth = charHeight * aspectRatio;
           }
 
-          charX = isCharacterOnRight ? PAGE_WIDTH - charWidth : 0;
+          // Apply 0.125" margin (STORY_MARGIN_PDF) for final character positioning
+          charX = isCharacterOnRight ? PAGE_WIDTH - charWidth - STORY_MARGIN_PDF : STORY_MARGIN_PDF;
 
           page.drawImage(characterImage, {
             x: charX,
@@ -1230,14 +1239,15 @@ async function generateStorybookPdf({ title, pages }) {
       const quoteXBase = charWidth
         ? charX + charWidth * 0.1
         : isCharacterOnRight
-        ? TEXT_MARGIN
-        : PAGE_WIDTH - availableHebrewWidth - TEXT_MARGIN;
-      const quoteMinX = TEXT_MARGIN;
-      const quoteMaxX = Math.max(TEXT_MARGIN, PAGE_WIDTH - availableHebrewWidth - TEXT_MARGIN);
+        ? TEXT_INSET
+        : PAGE_WIDTH - availableHebrewWidth - TEXT_INSET;
+      // Use STORY_MARGIN_PDF for edge safety, TEXT_INSET for positioning away from edges
+      const quoteMinX = STORY_MARGIN_PDF;
+      const quoteMaxX = Math.max(STORY_MARGIN_PDF, PAGE_WIDTH - availableHebrewWidth - STORY_MARGIN_PDF);
       const quoteX = clamp(quoteXBase, quoteMinX, quoteMaxX);
       const quoteYBase = charY + charHeight + 20;
-      const quoteMinY = TEXT_MARGIN;
-      const quoteMaxY = Math.max(TEXT_MARGIN, PAGE_HEIGHT - HEBREW_BASE_FONT_SIZE);
+      const quoteMinY = STORY_MARGIN_PDF;
+      const quoteMaxY = Math.max(STORY_MARGIN_PDF, PAGE_HEIGHT - HEBREW_BASE_FONT_SIZE - STORY_MARGIN_PDF);
       const quoteY = clamp(quoteYBase, quoteMinY, quoteMaxY);
       const hebrewLines = wrapText(hebrewQuote, availableHebrewWidth, HEBREW_BASE_FONT_SIZE);
 
@@ -1292,7 +1302,8 @@ async function generateStorybookPdf({ title, pages }) {
       PAGE_WIDTH - TEXT_MARGIN * 2
     );
 
-    const textX = isCharacterOnRight ? TEXT_MARGIN : PAGE_WIDTH - textBlockWidth - TEXT_MARGIN;
+    // Use TEXT_INSET to move text/blur box more toward center
+    const textX = isCharacterOnRight ? TEXT_INSET : PAGE_WIDTH - textBlockWidth - TEXT_INSET;
     const textY = PAGE_HEIGHT * 0.7;
 
     const storyText = pageData.text || '';
@@ -1305,12 +1316,14 @@ async function generateStorybookPdf({ title, pages }) {
       const rawBgWidth = textBlockWidth + TEXT_BG_LEFT_PADDING + TEXT_BG_RIGHT_PADDING;
       const rawBgHeight = textHeight + TEXT_BG_VERTICAL_PADDING * 2;
 
-      const bgX = clamp(rawBgX, 0, PAGE_WIDTH - 1);
-      const bgY = clamp(rawBgY, 0, PAGE_HEIGHT - 1);
+      // Clamp blur box to respect 0.125" margin on all sides
+      const bgX = clamp(rawBgX, STORY_MARGIN_PDF, PAGE_WIDTH - STORY_MARGIN_PDF);
+      const bgY = clamp(rawBgY, STORY_MARGIN_PDF, PAGE_HEIGHT - STORY_MARGIN_PDF);
       const xOffset = bgX - rawBgX;
       const yOffset = bgY - rawBgY;
-      const availableWidth = Math.max(1, Math.round(PAGE_WIDTH - bgX));
-      const availableHeight = Math.max(1, Math.round(PAGE_HEIGHT - bgY));
+      // Account for margin on both sides
+      const availableWidth = Math.max(1, Math.round(PAGE_WIDTH - bgX - STORY_MARGIN_PDF));
+      const availableHeight = Math.max(1, Math.round(PAGE_HEIGHT - bgY - STORY_MARGIN_PDF));
       const bgWidth = Math.min(
         Math.max(1, Math.round(rawBgWidth - xOffset)),
         availableWidth

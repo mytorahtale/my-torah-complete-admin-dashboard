@@ -1,12 +1,20 @@
 const path = require('path');
 const { registerFont } = require('canvas');
 
-const CANVAS_WIDTH = 5375;
-const CANVAS_HEIGHT = 2975;
+// Dedication page: 16×8 inches at 300 DPI (matching story pages)
+const CANVAS_WIDTH = 4800;  // 16 inches × 300 DPI
+const CANVAS_HEIGHT = 2400; // 8 inches × 300 DPI
 const HALF_WIDTH = CANVAS_WIDTH / 2;
+
+// 0.125 inch safety margins on all sides (37.5 pixels at 300 DPI)
+const MARGIN_SIZE = 37.5; // 0.125 inches × 300 DPI
+
+// Kid image positioned on left half with margins
 const KID_WIDTH_RATIO = 0.44;
 const KID_HEIGHT_RATIO = 0.88;
-const TEXT_PADDING_RATIO = 0.08;
+
+// Text area on right half with 0.125 inch margins
+const TEXT_PADDING_RATIO = MARGIN_SIZE / CANVAS_WIDTH; // ~0.0078
 const TEXT_HEIGHT_RATIO = 0.64;
 const TEXT_TOP_RATIO = 0.18;
 
@@ -76,13 +84,23 @@ const drawKidImage = (ctx, image) => {
 
   const kidAspect = image.width / image.height;
 
-  // Always cover full height, adjust width based on aspect ratio
-  const drawHeight = CANVAS_HEIGHT;
-  const drawWidth = drawHeight * kidAspect;
+  // Keep 2 inch margins on all sides
+  const availableHeight = CANVAS_HEIGHT - (MARGIN_SIZE * 2); // Height minus top and bottom margins
+  const availableWidth = HALF_WIDTH - (MARGIN_SIZE * 2); // Left half minus side margins
 
-  // Align to right edge of left half, extending leftward
-  const drawX = HALF_WIDTH - drawWidth;
-  const drawY = 0;
+  // Fit image within available space while maintaining aspect ratio
+  let drawHeight = availableHeight;
+  let drawWidth = drawHeight * kidAspect;
+
+  // If width exceeds available space, scale down based on width
+  if (drawWidth > availableWidth) {
+    drawWidth = availableWidth;
+    drawHeight = drawWidth / kidAspect;
+  }
+
+  // Center the image in the left half with margins
+  const drawX = MARGIN_SIZE + (availableWidth - drawWidth) / 2;
+  const drawY = MARGIN_SIZE + (availableHeight - drawHeight) / 2;
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
@@ -101,8 +119,9 @@ const drawTextBlock = (ctx, { area, title, subtitle }) => {
   const maxWidth = area.width;
   const areaHeight = area.height;
 
-  const titleTarget = Math.min(480, maxWidth * 0.6, areaHeight * 0.5);
-  const titleMin = Math.max(140, Math.round(Math.min(maxWidth, areaHeight) * 0.18));
+  // Fixed title sizes for dedication page (doubled)
+  const titleTarget = 120;
+  const titleMin = 100;
   const titleSize = primary.length
     ? fitFontSize(ctx, primary, {
         target: titleTarget,
@@ -114,11 +133,9 @@ const drawTextBlock = (ctx, { area, title, subtitle }) => {
 
   let subtitleSize = 0;
   if (secondary.length) {
-    const subtitleBase = titleSize
-      ? Math.max(Math.min(titleSize * 0.95, titleSize - 5), 0)
-      : Math.min(420, maxWidth * 0.55, areaHeight * 0.45);
-    const subtitleMin = Math.max(170, Math.round(Math.min(maxWidth, areaHeight) * 0.2));
-    const subtitleTarget = Math.max(subtitleBase, subtitleMin);
+    // Fixed subtitle sizes for dedication page (doubled)
+    const subtitleTarget = 90;
+    const subtitleMin = 80;
     subtitleSize = fitFontSize(ctx, secondary, {
       target: subtitleTarget,
       min: subtitleMin,
@@ -162,12 +179,12 @@ const drawTextBlock = (ctx, { area, title, subtitle }) => {
   ctx.fillStyle = '#FFFFFF';
 
   if (primary.length && titleSize) {
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.font = `bold ${Math.round(titleSize)}px "CanvaSans"`;
     primary.forEach((line, index) => {
       cursorY += titleLineHeight;
-      ctx.fillText(line, centerX, cursorY);
+      ctx.fillText(line, leftX, cursorY);
       if (index < primary.length - 1) {
         cursorY += titleSpacing;
       }

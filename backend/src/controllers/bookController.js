@@ -2942,12 +2942,10 @@ exports.confirmStorybookPdf = async (req, res) => {
     const pageCount = sourcePdf.getPageCount();
     const originalPageCount = pageCount; // Store for metadata
 
-    // Content size: 8×8 inches = 576 points (72 points per inch)
-    const contentSize = 8 * 72; // 576 points
-    // Bleed: 0.125 inch on each side (outside content area)
-    const bleedSize = 0.125 * 72; // 9 points per side
-    // Final canvas: 8.25×8.25 inches = 594 points (8 + 0.125 + 0.125)
-    const canvasSize = contentSize + (bleedSize * 2); // 594 points
+    // Final square canvas: 8.25×8.25 inches = 594 points (72 points per inch)
+    const finalSquareSize = 8.25 * 72; // 594 points
+    // Scale factor: 8.25 / 8 = 1.03125 (content scaled up 3.125% to fill canvas)
+    const scaleFactor = 1.03125;
 
     for (let i = 0; i < pageCount; i++) {
       const sourcePage = sourcePdf.getPage(i);
@@ -2961,47 +2959,47 @@ exports.confirmStorybookPdf = async (req, res) => {
         continue;
       }
 
-      // All other pages: 16:8 ratio - split into two 8×8 squares with 0.125" bleed outside
+      // All other pages: Split into two 8.25×8.25 squares, scaled up to fill (no bleed)
       const embeddedPage = await splitPdf.embedPage(sourcePage);
 
-      // LEFT HALF: Create 8.25×8.25 canvas with full 8×8 content + 0.125" white bleed outside
-      const leftPage = splitPdf.addPage([canvasSize, canvasSize]);
+      // Scaled dimensions (8×8 scaled to 8.25×8.25)
+      const scaledWidth = originalWidth * scaleFactor;
+      const scaledHeight = originalHeight * scaleFactor;
 
-      // Draw left half of page at full 8×8 size, centered with bleed margin
+      // LEFT HALF: 8.25×8.25 canvas, content scaled to fill
+      const leftPage = splitPdf.addPage([finalSquareSize, finalSquareSize]);
       leftPage.drawPage(embeddedPage, {
-        x: bleedSize, // 0.125" margin on left
-        y: bleedSize, // 0.125" margin on bottom
-        width: originalWidth,
-        height: originalHeight,
+        x: 0,
+        y: 0,
+        width: scaledWidth,
+        height: scaledHeight,
       });
 
-      // Cover the right margin area with white to hide overflow from right half
+      // Cover right overflow with white
       leftPage.drawRectangle({
-        x: bleedSize + contentSize,
+        x: finalSquareSize,
         y: 0,
-        width: bleedSize,
-        height: canvasSize,
+        width: scaledWidth - finalSquareSize,
+        height: finalSquareSize,
         color: rgb(1, 1, 1),
       });
 
-      // RIGHT HALF: Create 8.25×8.25 canvas with full 8×8 content + 0.125" white bleed outside
-      const rightPage = splitPdf.addPage([canvasSize, canvasSize]);
-
-      // Shift left by half the width to show right half, centered with bleed margin
-      const halfWidth = originalWidth / 2;
+      // RIGHT HALF: 8.25×8.25 canvas, content scaled to fill, shifted to show right half
+      const rightPage = splitPdf.addPage([finalSquareSize, finalSquareSize]);
+      const halfScaledWidth = scaledWidth / 2;
       rightPage.drawPage(embeddedPage, {
-        x: bleedSize - halfWidth, // Shift to show right half
-        y: bleedSize, // 0.125" margin on bottom
-        width: originalWidth,
-        height: originalHeight,
+        x: -halfScaledWidth,
+        y: 0,
+        width: scaledWidth,
+        height: scaledHeight,
       });
 
-      // Cover the left margin area with white to hide overflow from left half
+      // Cover left overflow with white
       rightPage.drawRectangle({
-        x: 0,
+        x: -halfScaledWidth,
         y: 0,
-        width: bleedSize,
-        height: canvasSize,
+        width: halfScaledWidth,
+        height: finalSquareSize,
         color: rgb(1, 1, 1),
       });
     }
@@ -3037,15 +3035,16 @@ exports.confirmStorybookPdf = async (req, res) => {
       derivedFromAssetKey: pdfAsset.key || null,
       confirmedAt: now,
       metadata: {
-        splitStrategy: 'vertical-half',
+        splitStrategy: 'vertical-half-scaled',
         originalPageCount,
         generatedPageCount: splitPdf.getPageCount(),
         preservedCoverPage: true,
-        preservedCoverSize: '18.8x10 inches',
-        resized: true,
-        contentSize: '8x8 inches',
-        bleedSize: '0.125 inches (outside content)',
-        finalSize: '8.25x8.25 inches',
+        preservedCoverSize: '18.8x10 inches (5640x3000 px @ 300 DPI)',
+        contentMargins: '0.125 inches safety margin on all sides',
+        scaled: true,
+        scaleFactor: '1.03125 (3.125% increase)',
+        finalSize: '8.25x8.25 inches (2475x2475 px @ 300 DPI)',
+        bleedSize: 'None',
         printDPI: 300,
       },
       pages: (pdfAsset.pages || []).map((page) => cloneDocument(page)),

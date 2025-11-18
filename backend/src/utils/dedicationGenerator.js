@@ -117,11 +117,13 @@ const generateDedicationPage = async ({
     }
   }
 
+  // Text area on right half with 0.125 inch margins on all sides
+  const MARGIN_SIZE = 37.5; // 0.125 inches at 300 DPI
   const textArea = {
-    x: HALF_WIDTH + CANVAS_WIDTH * TEXT_PADDING_RATIO,
-    y: CANVAS_HEIGHT * TEXT_TOP_RATIO,
-    width: HALF_WIDTH - CANVAS_WIDTH * TEXT_PADDING_RATIO * 2,
-    height: CANVAS_HEIGHT * TEXT_HEIGHT_RATIO,
+    x: HALF_WIDTH + MARGIN_SIZE,
+    y: MARGIN_SIZE,
+    width: HALF_WIDTH - (MARGIN_SIZE * 2),
+    height: CANVAS_HEIGHT - (MARGIN_SIZE * 2),
   };
 
   drawTextBlock(ctx, {
