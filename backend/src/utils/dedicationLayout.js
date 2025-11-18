@@ -179,12 +179,12 @@ const drawTextBlock = (ctx, { area, title, subtitle }) => {
   ctx.fillStyle = '#FFFFFF';
 
   if (primary.length && titleSize) {
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.font = `bold ${Math.round(titleSize)}px "CanvaSans"`;
     primary.forEach((line, index) => {
       cursorY += titleLineHeight;
-      ctx.fillText(line, leftX, cursorY);
+      ctx.fillText(line, centerX, cursorY);
       if (index < primary.length - 1) {
         cursorY += titleSpacing;
       }
@@ -195,12 +195,12 @@ const drawTextBlock = (ctx, { area, title, subtitle }) => {
     if (primary.length && titleSize) {
       cursorY += gap;
     }
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.font = `normal ${Math.round(subtitleSize)}px "CanvaSans"`;
     secondary.forEach((line, index) => {
       cursorY += subtitleLineHeight;
-      ctx.fillText(line, leftX, cursorY);
+      ctx.fillText(line, centerX, cursorY);
       if (index < secondary.length - 1) {
         cursorY += subtitleSpacing;
       }
