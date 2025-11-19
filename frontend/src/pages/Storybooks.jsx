@@ -192,15 +192,15 @@ const containsNamePlaceholder = (value) =>
   typeof value === 'string' ? NAME_PLACEHOLDER_DETECTION.test(value) : false;
 
 const getGenderPronouns = (gender) => {
-  if (!gender) return { subject: '', possessive: '', object: '' };
+  if (!gender) return { subject: '', possessive: '', object: '', possessivePronoun: '', possessiveDeterminer: '' };
   const lowerGender = gender.toLowerCase();
   if (lowerGender === 'male') {
-    return { subject: 'He', possessive: 'His', object: 'Him' };
+    return { subject: 'He', possessive: 'His', object: 'Him', possessivePronoun: 'His', possessiveDeterminer: 'His' };
   }
   if (lowerGender === 'female') {
-    return { subject: 'She', possessive: 'Hers', object: 'Her' };
+    return { subject: 'She', possessive: 'Her', object: 'Her', possessivePronoun: 'Hers', possessiveDeterminer: 'Her' };
   }
-  return { subject: 'They', possessive: 'Their', object: 'Them' };
+  return { subject: 'They', possessive: 'Their', object: 'Them', possessivePronoun: 'Theirs', possessiveDeterminer: 'Their' };
 };
 
 const replaceNamePlaceholders = (value, replacement) => {
@@ -222,8 +222,11 @@ const replacePlaceholders = (value, readerName, readerGender) => {
   if (readerGender) {
     const pronouns = getGenderPronouns(readerGender);
     result = result.replace(/\{gender\}/gi, pronouns.subject);
-    result = result.replace(/\{genderpos\}/gi, pronouns.possessive);
+    result = result.replace(/\{genderpos\}/gi, pronouns.possessiveDeterminer || pronouns.possessive);
     result = result.replace(/\{genderper\}/gi, pronouns.object);
+    result = result.replace(/\{genderx\}/gi, pronouns.possessivePronoun || pronouns.possessive);
+    result = result.replace(/\{gendery\}/gi, pronouns.object);
+    result = result.replace(/\{genderz\}/gi, pronouns.possessiveDeterminer || pronouns.possessive);
   }
   return result;
 };
