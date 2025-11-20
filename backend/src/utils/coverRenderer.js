@@ -325,7 +325,7 @@ async function renderCoverToCanvas({
     const baseHeightRatio = 0.7 * 1.1;
     const charAreaWidth = pageWidth * baseWidthRatio;
     const charAreaHeight = pageHeight * baseHeightRatio;
-    const bottomMargin = 300; // Move character down a little (reduced from 400 to 300)
+    const bottomMargin = 240; // Character bottom gap (240px = 0.8 inch at 300 DPI)
     // Center character horizontally on right side (behind text at 70%)
     const rightSideCenter = pageWidth * 0.70;
     const areaX = rightSideCenter - (charAreaWidth / 2);
