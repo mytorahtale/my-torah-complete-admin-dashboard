@@ -619,7 +619,7 @@ function Dashboard() {
       </section>
 
       <div className="mt-8 text-center">
-        <p className="text-xs text-muted-foreground">v1.0</p>
+        <p className="text-xs text-muted-foreground">v1.1</p>
       </div>
     </div>
   );
