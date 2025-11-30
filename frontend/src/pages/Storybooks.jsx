@@ -2113,9 +2113,11 @@ function Storybooks() {
           pageCount: book.pageCount || 0,
         });
         setStoryTitle((prev) => {
-          if (preserveTitle && prev) return prev;
-          if (prev) return prev;
-          return `${book.name} Storybook`;
+          const defaultTitle = `${book.name} Storybook`;
+          if (preserveTitle) {
+            return prev || defaultTitle;
+          }
+          return defaultTitle;
         });
         // Pages will be empty from minimal API, that's OK - we don't need them for the list view
         setPages(

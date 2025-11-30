@@ -2670,22 +2670,22 @@ exports.regenerateStorybookPdf = async (req, res) => {
     for (const bookPage of sortedBookPages) {
       const snapshot = (pdfAssetDoc.pages || []).find((page) => page.order === bookPage.order) || {};
 
-      const backgroundSource = bookPage.backgroundImage
-        ? await attachFreshSignedUrl(bookPage.backgroundImage)
-        : snapshot.background
+      const backgroundSource = snapshot.background
         ? await attachFreshSignedUrl(snapshot.background)
+        : bookPage.backgroundImage
+        ? await attachFreshSignedUrl(bookPage.backgroundImage)
         : null;
 
-      const characterSource = bookPage.characterImage
-        ? await attachFreshSignedUrl(bookPage.characterImage)
-        : snapshot.character
+      const characterSource = snapshot.character
         ? await attachFreshSignedUrl(snapshot.character)
+        : bookPage.characterImage
+        ? await attachFreshSignedUrl(bookPage.characterImage)
         : null;
 
-      const originalCharacterSource = bookPage.characterImageOriginal
-        ? await attachFreshSignedUrl(bookPage.characterImageOriginal)
-        : snapshot.characterOriginal
+      const originalCharacterSource = snapshot.characterOriginal
         ? await attachFreshSignedUrl(snapshot.characterOriginal)
+        : bookPage.characterImageOriginal
+        ? await attachFreshSignedUrl(bookPage.characterImageOriginal)
         : null;
 
       const resolvedCharacterPosition = normalizeCharacterPosition(
@@ -2711,14 +2711,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
         pageType: 'story',
       };
 
-      const removalApplied = await ensureBackgroundRemovedCharacter({
-        book,
-        bookSlug,
-        storyPage,
-        bookPage,
-      });
-
-      backgroundRemovalApplied = backgroundRemovalApplied || removalApplied;
+      // Keep existing snapshot assets intact during PDF regeneration; no background-removal or book mutations here.
       storyPages.push(storyPage);
     }
 
@@ -2764,15 +2757,26 @@ exports.regenerateStorybookPdf = async (req, res) => {
       }
     }
 
-    // CRITICAL FIX: Reload book to get latest cover/dedication candidate selections
-    // The original book object was loaded before candidate selections were applied
-    // Cover/dedication pages need the latest characterImage/kidImage values from database
+    // Reload book (for metadata), but prefer existing PDF snapshot data for cover/dedication to avoid cross-book contamination
     const refreshedBook = await Book.findById(bookId);
     if (!refreshedBook) {
       return res.status(404).json({
         success: false,
         message: 'Book not found when reloading for cover/dedication pages',
       });
+    }
+    const snapshotCoverPage =
+      (pdfAssetDoc.pages || []).find((page) => page.pageType === 'cover' || page.order === 0)
+        ?.coverPage || null;
+    const snapshotDedicationPage =
+      (pdfAssetDoc.pages || []).find((page) => page.pageType === 'dedication' || page.order === 0.5)
+        ?.dedicationPage || null;
+    const bookForFrontMatter = cloneDocument(refreshedBook) || refreshedBook;
+    if (snapshotCoverPage) {
+      bookForFrontMatter.coverPage = snapshotCoverPage;
+    }
+    if (snapshotDedicationPage) {
+      bookForFrontMatter.dedicationPage = snapshotDedicationPage;
     }
 
     const frontMatterPages = [];
@@ -2788,7 +2792,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
     } : null;
 
     const coverFrontMatter = buildCoverPageContent({
-      book: refreshedBook, // Use refreshed book with latest candidate selections
+      book: bookForFrontMatter,
       readerName,
       readerGender,
       storyPages,
@@ -2808,7 +2812,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
     } : null;
 
     const dedicationFrontMatter = buildDedicationPageContent({
-      book: refreshedBook, // Use refreshed book with latest candidate selections
+      book: bookForFrontMatter,
       readerName,
       readerGender,
       readerSecondTitle,
