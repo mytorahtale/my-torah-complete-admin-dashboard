@@ -387,21 +387,27 @@ const attachFreshSignedUrl = async (asset) => {
 };
 
 const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
-  const { bookPages = [], preferSnapshotAssets = false } = options;
+  const {
+    bookPages = [],
+    preferSnapshotAssets = false,
+    strictSnapshotAssets = false,
+  } = options;
   const bookPagesArray = Array.isArray(bookPages) ? bookPages : [];
   const bookPagesById = new Map();
   const bookPagesByOrder = new Map();
 
-  bookPagesArray.forEach((page) => {
-    const cloned = cloneDocument(page) || {};
-    if (cloned._id) {
-      bookPagesById.set(String(cloned._id), cloned);
-    }
-    const orderValue = Number(cloned.order);
-    if (Number.isFinite(orderValue)) {
-      bookPagesByOrder.set(orderValue, cloned);
-    }
-  });
+  if (!strictSnapshotAssets) {
+    bookPagesArray.forEach((page) => {
+      const cloned = cloneDocument(page) || {};
+      if (cloned._id) {
+        bookPagesById.set(String(cloned._id), cloned);
+      }
+      const orderValue = Number(cloned.order);
+      if (Number.isFinite(orderValue)) {
+        bookPagesByOrder.set(orderValue, cloned);
+      }
+    });
+  }
 
   const hydrations = await Promise.all(
     (pages || []).map(async (page) => {
@@ -410,12 +416,18 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
       const pageId = clonedPage._id || clonedPage.pageId;
       const pageOrder = Number(clonedPage.order);
       const bookPageCandidate =
-        (pageId && bookPagesById.get(String(pageId))) ||
-        (Number.isFinite(pageOrder) && bookPagesByOrder.get(pageOrder)) ||
-        null;
+        strictSnapshotAssets
+          ? null
+          : (pageId && bookPagesById.get(String(pageId))) ||
+            (Number.isFinite(pageOrder) && bookPagesByOrder.get(pageOrder)) ||
+            null;
 
-      const pickAsset = (snapshotValue, bookValue) =>
-        preferSnapshotAssets ? snapshotValue || bookValue : bookValue || snapshotValue;
+  const pickAsset = (snapshotValue, bookValue) => {
+    if (strictSnapshotAssets) {
+      return snapshotValue || null;
+    }
+    return preferSnapshotAssets ? snapshotValue || bookValue : bookValue || snapshotValue;
+  };
 
       const backgroundSource = pickAsset(
         clonedPage.background,
@@ -423,10 +435,26 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
       );
       const resolvedBackground = await attachFreshSignedUrl(backgroundSource);
 
+      const candidateAssets = Array.isArray(clonedPage.candidateAssets)
+        ? clonedPage.candidateAssets
+        : [];
+      const selectedCandidate = (() => {
+        const rawIndex = Number(clonedPage.selectedCandidateIndex);
+        if (!Number.isFinite(rawIndex)) return null;
+        const zeroBased = rawIndex > 0 ? rawIndex - 1 : rawIndex;
+        if (zeroBased >= 0 && zeroBased < candidateAssets.length) {
+          return candidateAssets[zeroBased];
+        }
+        return null;
+      })();
+
       let characterSource = null;
-      if (preferSnapshotAssets) {
+      if (strictSnapshotAssets) {
+        characterSource = clonedPage.character || selectedCandidate || null;
+      } else if (preferSnapshotAssets) {
         characterSource =
           clonedPage.character ||
+          selectedCandidate ||
           bookPageCandidate?.characterImage ||
           null;
       } else if (bookPageCandidate?.characterImage) {
@@ -438,6 +466,19 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
       const resolvedCharacter = await attachFreshSignedUrl(characterSource);
 
       const resolveOriginalSource = () => {
+        if (strictSnapshotAssets) {
+          if (clonedPage.characterOriginal) {
+            return clonedPage.characterOriginal;
+          }
+          if (selectedCandidate && !selectedCandidate.backgroundRemoved) {
+            return selectedCandidate;
+          }
+          if (clonedPage.character && !clonedPage.character.backgroundRemoved) {
+            return clonedPage.character;
+          }
+          return null;
+        }
+
         if (clonedPage.characterOriginal) {
           return clonedPage.characterOriginal;
         }
@@ -472,7 +513,10 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
         ? await Promise.all(clonedPage.candidateAssets.map((asset) => attachFreshSignedUrl(asset)))
         : [];
 
-      const coverSource = pickAsset(clonedPage.cover, bookPageCandidate?.cover || null);
+      const coverSource = pickAsset(
+        clonedPage.cover,
+        strictSnapshotAssets ? null : bookPageCandidate?.cover || null
+      );
       let resolvedCover = null;
       if (coverSource) {
         const coverClone = clonePlainObject(coverSource) || {};
@@ -550,16 +594,21 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
       clonedPage.coverPage = resolvedCoverPage;
       clonedPage.dedicationPage = resolvedDedicationPage;
       clonedPage.renderedImage = resolvedRenderedImage;
-      clonedPage.pageType = clonedPage.pageType || bookPageCandidate?.pageType || 'story';
+      clonedPage.pageType =
+        clonedPage.pageType || (strictSnapshotAssets ? null : bookPageCandidate?.pageType) || 'story';
       clonedPage.characterPosition = normalizeCharacterPosition(
         typeof clonedPage.characterPosition === 'string'
           ? clonedPage.characterPosition
+          : strictSnapshotAssets
+          ? 'auto'
           : bookPageCandidate?.characterPosition,
         'auto'
       );
       clonedPage.characterPositionResolved = normalizeCharacterPosition(
         typeof clonedPage.characterPositionResolved === 'string'
           ? clonedPage.characterPositionResolved
+          : strictSnapshotAssets
+          ? clonedPage.characterPosition
           : bookPageCandidate?.characterPosition
           ? bookPageCandidate.characterPosition
           : clonedPage.characterPosition,
@@ -661,6 +710,8 @@ const hydrateBookDocument = async (book) => {
       const clonedAsset = cloneDocument(asset) || {};
       clonedAsset.pages = await attachFreshSignedUrlsToPages(clonedAsset.pages || [], {
         bookPages: clonedBook.pages || [],
+        preferSnapshotAssets: true,
+        strictSnapshotAssets: true,
       });
       return clonedAsset;
     })
@@ -1973,6 +2024,7 @@ exports.getBookStorybooks = async (req, res) => {
           clonedAsset.pages = await attachFreshSignedUrlsToPages(clonedAsset.pages || [], {
             bookPages: book.pages || [],
             preferSnapshotAssets: true,
+            strictSnapshotAssets: true,
           });
           return clonedAsset;
         })
@@ -2017,6 +2069,7 @@ exports.getStorybookAssetPages = async (req, res) => {
     const pages = await attachFreshSignedUrlsToPages(pdfAsset.pages || [], {
       bookPages: book.pages || [],
       preferSnapshotAssets: true,
+      strictSnapshotAssets: true,
     });
 
     res.status(200).json({
@@ -2426,6 +2479,7 @@ exports.generateStorybook = async (req, res) => {
     const hydratedPages = await attachFreshSignedUrlsToPages(pdfAsset.pages || [], {
       bookPages: book.pages || [],
       preferSnapshotAssets: true,
+      strictSnapshotAssets: true,
     });
 
     res.status(201).json({
@@ -2526,6 +2580,7 @@ exports.regenerateStorybookPage = async (req, res) => {
           await attachFreshSignedUrlsToPages([result.pdfAssetPage], {
             bookPages: result.page ? [result.page] : book.pages || [],
             preferSnapshotAssets: true,
+            strictSnapshotAssets: true,
           })
         )[0]
       : null;
@@ -2886,6 +2941,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
     const hydratedPages = await attachFreshSignedUrlsToPages(pagesSnapshot, {
       bookPages: book.pages || [],
       preferSnapshotAssets: true,
+      strictSnapshotAssets: true,
     });
 
     res.status(200).json({
@@ -3079,6 +3135,7 @@ exports.confirmStorybookPdf = async (req, res) => {
     const hydratedPages = await attachFreshSignedUrlsToPages(savedSplitAsset.pages || [], {
       bookPages: book.pages || [],
       preferSnapshotAssets: true,
+      strictSnapshotAssets: true,
     });
 
     const responseAsset = {
@@ -3129,6 +3186,7 @@ exports.selectStorybookPageCandidate = async (req, res) => {
       ? await attachFreshSignedUrlsToPages([result.pdfAssetPage], {
           bookPages: result.page ? [result.page] : [],
           preferSnapshotAssets: true,
+          strictSnapshotAssets: true,
         })
       : [];
 

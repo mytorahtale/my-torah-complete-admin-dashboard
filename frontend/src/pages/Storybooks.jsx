@@ -2508,7 +2508,10 @@ function Storybooks() {
         const matchingSplit =
           splitLookup.get(identifier) || (asset.key ? splitLookup.get(asset.key) : null);
         const sortTimestamp =
-          asset.updatedAt || asset.createdAt || asset.confirmedAt || asset.metadata?.createdAt;
+          asset.createdAt ||
+          asset.metadata?.createdAt ||
+          asset.confirmedAt ||
+          asset.updatedAt;
         return {
           id: asset._id || asset.key || `ready-${identifier}`,
           asset,
@@ -2759,7 +2762,6 @@ function Storybooks() {
                 return {
                   ...existing,
                   pages: remotePages,
-                  updatedAt: new Date().toISOString(),
                 };
               })
             : prev.pdfAssets;
