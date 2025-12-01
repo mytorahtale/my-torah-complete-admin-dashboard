@@ -3024,49 +3024,46 @@ exports.regenerateStorybookPdf = async (req, res) => {
       });
     }
 
-    const sortedBookPages = (book.pages || [])
-      .slice()
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
-
-    if (!sortedBookPages.length) {
+    const snapshotPages = Array.isArray(pdfAssetDoc.pages) ? pdfAssetDoc.pages.slice() : [];
+    if (!snapshotPages.length) {
       return res.status(400).json({
         success: false,
-        message: 'Book has no pages to rebuild the PDF',
+        message: 'Storybook snapshot has no pages to rebuild the PDF',
       });
     }
 
     const bookSlug = book.slug || `${slugify(book.name)}-${book._id.toString().slice(-6)}`;
     const storyPages = [];
-    let backgroundRemovalApplied = false;
-
-    for (const bookPage of sortedBookPages) {
-      const snapshot = (pdfAssetDoc.pages || []).find((page) => page.order === bookPage.order) || {};
+    for (const snapshot of snapshotPages
+      .slice()
+      .sort((a, b) => (a.order || 0) - (b.order || 0))) {
+      if (snapshot.pageType === 'cover' || snapshot.order === 0) {
+        // Cover handled separately in front matter
+        continue;
+      }
+      if (snapshot.pageType === 'dedication' || snapshot.order === 0.5) {
+        // Dedication handled separately in front matter
+        continue;
+      }
 
       const backgroundSource = snapshot.background
         ? await attachFreshSignedUrl(snapshot.background)
-        : bookPage.backgroundImage
-        ? await attachFreshSignedUrl(bookPage.backgroundImage)
         : null;
-
       const characterSource = snapshot.character
         ? await attachFreshSignedUrl(snapshot.character)
-        : bookPage.characterImage
-        ? await attachFreshSignedUrl(bookPage.characterImage)
         : null;
-
       const originalCharacterSource = snapshot.characterOriginal
         ? await attachFreshSignedUrl(snapshot.characterOriginal)
-        : bookPage.characterImageOriginal
-        ? await attachFreshSignedUrl(bookPage.characterImageOriginal)
         : null;
 
       const resolvedCharacterPosition = normalizeCharacterPosition(
-        bookPage.characterPosition,
+        snapshot.characterPosition || snapshot.characterPositionResolved,
         'auto'
       );
-      const storyPage = {
-        order: bookPage.order,
-        text: snapshot.text || bookPage.text || '',
+
+      storyPages.push({
+        order: snapshot.order,
+        text: snapshot.text || '',
         quote: snapshot.quote || '',
         background: backgroundSource,
         character: characterSource,
@@ -3081,10 +3078,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
           ? snapshot.selectedCandidateIndex
           : null,
         pageType: 'story',
-      };
-
-      // Keep existing snapshot assets intact during PDF regeneration; no background-removal or book mutations here.
-      storyPages.push(storyPage);
+      });
     }
 
     if (!storyPages.length) {
@@ -3129,7 +3123,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
       }
     }
 
-    // Reload book (for metadata), but prefer existing PDF snapshot data for cover/dedication to avoid cross-book contamination
+    // Reload book for metadata; use snapshot cover/dedication to avoid leaking newer characters
     const refreshedBook = await Book.findById(bookId);
     if (!refreshedBook) {
       return res.status(404).json({
@@ -3270,35 +3264,6 @@ exports.regenerateStorybookPdf = async (req, res) => {
       updatedAt: now,
     }));
 
-    if (coverFrontMatter?.coverPage?.characterImage) {
-      book.coverPage = book.coverPage || {};
-      book.coverPage.characterImage = coverFrontMatter.coverPage.characterImage;
-      if (!book.coverPage.backgroundImage && coverFrontMatter.coverPage.backgroundImage) {
-        book.coverPage.backgroundImage = coverFrontMatter.coverPage.backgroundImage;
-      }
-      if (!book.coverPage.qrCode && coverFrontMatter.coverPage.qrCode) {
-        book.coverPage.qrCode = coverFrontMatter.coverPage.qrCode;
-      }
-      book.markModified('coverPage');
-    }
-
-    if (dedicationFrontMatter?.dedicationPage?.kidImage || dedicationFrontMatter?.dedicationPage?.generatedImage) {
-      book.dedicationPage = book.dedicationPage || {};
-      if (dedicationFrontMatter.dedicationPage.kidImage) {
-        book.dedicationPage.kidImage = dedicationFrontMatter.dedicationPage.kidImage;
-      }
-      if (dedicationFrontMatter.dedicationPage.generatedImage) {
-        book.dedicationPage.generatedImage = dedicationFrontMatter.dedicationPage.generatedImage;
-      }
-      if (
-        !book.dedicationPage.backgroundImage &&
-        dedicationFrontMatter.dedicationPage.backgroundImage
-      ) {
-        book.dedicationPage.backgroundImage = dedicationFrontMatter.dedicationPage.backgroundImage;
-      }
-      book.markModified('dedicationPage');
-    }
-
     pdfAssetDoc.title = finalTitle;
     pdfAssetDoc.size = pdfBuffer.length;
     pdfAssetDoc.pageCount = pageCount;
@@ -3308,9 +3273,6 @@ exports.regenerateStorybookPdf = async (req, res) => {
     pdfAssetDoc.readerName = readerName;
     pdfAssetDoc.readerGender = readerGender;
 
-    if (backgroundRemovalApplied) {
-      book.markModified('pages');
-    }
     book.markModified('pdfAssets');
     await book.save();
 
