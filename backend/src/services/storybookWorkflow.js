@@ -191,10 +191,10 @@ const replaceReaderPlaceholders = (value, readerName, readerGender) => {
   return result;
 };
 
-const normalizeCharacterPosition = (value, fallback = 'auto') => {
+const normalizeCharacterPosition = (value, fallback = null) => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
-    if (normalized === 'left' || normalized === 'right' || normalized === 'auto') {
+    if (normalized === 'left' || normalized === 'right') {
       return normalized;
     }
   }
@@ -890,7 +890,7 @@ const preparePageStoryContent = ({ bookPage, jobPage, readerName, readerGender }
   const resolvedPrompt = resolvePromptByGender(bookPage, readerGender);
   const resolvedCharacterPosition = normalizeCharacterPosition(
     bookPage.characterPosition,
-    'auto'
+    null
   );
 
   return {
@@ -1740,7 +1740,7 @@ const formatBookPagesForJob = (book, { readerGender = '' } = {}) => {
       text: page.text || '',
       backgroundImage: page.backgroundImage,
       pageType: page.pageType === 'cover' ? 'cover' : 'story',
-      characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
+      characterPosition: normalizeCharacterPosition(page.characterPosition, null),
       status: 'queued',
       progress: 0,
       events: [createEvent('page-queued', 'Page queued for generation')],

@@ -73,10 +73,10 @@ const normalizeString = (value) =>
 const normalizeGenderValue = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-const normalizeCharacterPosition = (value, fallback = 'auto') => {
+const normalizeCharacterPosition = (value, fallback = null) => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
-    if (normalized === 'left' || normalized === 'right' || normalized === 'auto') {
+    if (normalized === 'left' || normalized === 'right') {
       return normalized;
     }
   }
@@ -664,24 +664,17 @@ const attachFreshSignedUrlsToPages = async (pages = [], options = {}) => {
       clonedPage.renderedImage = resolvedRenderedImage;
       clonedPage.pageType =
         clonedPage.pageType || (strictSnapshotAssets ? null : bookPageCandidate?.pageType) || 'story';
-      clonedPage.characterPosition = normalizeCharacterPosition(
+      const positionRaw =
         typeof clonedPage.characterPosition === 'string'
           ? clonedPage.characterPosition
-          : strictSnapshotAssets
-          ? 'auto'
-          : bookPageCandidate?.characterPosition,
-        'auto'
-      );
-      clonedPage.characterPositionResolved = normalizeCharacterPosition(
-        typeof clonedPage.characterPositionResolved === 'string'
+          : typeof clonedPage.characterPositionResolved === 'string'
           ? clonedPage.characterPositionResolved
           : strictSnapshotAssets
-          ? clonedPage.characterPosition
-          : bookPageCandidate?.characterPosition
-          ? bookPageCandidate.characterPosition
-          : clonedPage.characterPosition,
-        null
-      );
+          ? null
+          : bookPageCandidate?.characterPosition || null;
+      const resolvedPosition = normalizeCharacterPosition(positionRaw, null);
+      clonedPage.characterPosition = resolvedPosition;
+      clonedPage.characterPositionResolved = resolvedPosition;
       return clonedPage;
     })
   );
@@ -757,7 +750,7 @@ const hydrateBookDocument = async (book) => {
       return {
         ...clonedPage,
         pageType: clonedPage.pageType || 'story',
-        characterPosition: normalizeCharacterPosition(clonedPage.characterPosition, 'auto'),
+        characterPosition: normalizeCharacterPosition(clonedPage.characterPosition, null),
         cover,
         characterPrompt: safeText(clonedPage.characterPrompt),
         characterPromptMale: safeText(clonedPage.characterPromptMale),
@@ -1559,7 +1552,7 @@ exports.duplicateBook = async (req, res) => {
         characterPromptMale: safeText(page.characterPromptMale),
         characterPromptFemale: safeText(page.characterPromptFemale),
         pageType,
-        characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
+        characterPosition: normalizeCharacterPosition(page.characterPosition, null),
         backgroundImage,
         characterImage,
         characterImageOriginal,
@@ -1647,7 +1640,7 @@ exports.createBook = async (req, res) => {
       removeImage: normalizeBoolean(page.removeImage),
       pageType,
     };
-    base.characterPosition = normalizeCharacterPosition(page?.characterPosition, 'auto');
+    base.characterPosition = normalizeCharacterPosition(page?.characterPosition, null);
 
     if (pageType === 'cover') {
       base.cover = mergeCoverConfig(null, page.cover || {});
@@ -1697,7 +1690,7 @@ exports.createBook = async (req, res) => {
       };
       pageData.characterPosition = normalizeCharacterPosition(
         pageDefinition.characterPosition,
-        'auto'
+        null
       );
       let coverConfig = null;
       if (pageData.pageType === 'cover') {
@@ -1998,7 +1991,7 @@ exports.updateBook = async (req, res) => {
       );
       const existingPosition = normalizeCharacterPosition(
         existing?.characterPosition,
-        'auto'
+        null
       );
       pageData.characterPosition =
         requestedPosition !== null ? requestedPosition : existingPosition;
@@ -2598,7 +2591,7 @@ exports.generateStorybook = async (req, res) => {
       );
       const fallbackPosition = normalizeCharacterPosition(
         bookPage.characterPosition,
-        'auto'
+        null
       );
       const storyPage = {
         order,
@@ -2727,7 +2720,7 @@ exports.generateStorybook = async (req, res) => {
       pageType: page.pageType || 'story',
       characterPosition: normalizeCharacterPosition(
         page.characterPositionResolved || page.characterPosition,
-        'auto'
+        null
       ),
       characterPositionResolved: normalizeCharacterPosition(
         page.characterPositionResolved || page.characterPosition,
@@ -3058,7 +3051,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
 
       const resolvedCharacterPosition = normalizeCharacterPosition(
         snapshot.characterPosition || snapshot.characterPositionResolved,
-        'auto'
+        null
       );
 
       storyPages.push({
@@ -3250,7 +3243,7 @@ exports.regenerateStorybookPdf = async (req, res) => {
       pageType: page.pageType || 'story',
       characterPosition: normalizeCharacterPosition(
         page.characterPositionResolved || page.characterPosition,
-        'auto'
+        null
       ),
       characterPositionResolved: normalizeCharacterPosition(
         page.characterPositionResolved || page.characterPosition,

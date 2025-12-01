@@ -1381,13 +1381,9 @@ const buildPagePreviewModel = ({
       ? page.characterPositionResolved
       : page.characterPosition;
   const rawPosition =
-    typeof positionSource === 'string' ? positionSource.trim().toLowerCase() : 'auto';
-  let isCharacterOnRight = true;
-  if (rawPosition === 'left') {
-    isCharacterOnRight = false;
-  } else if (rawPosition === 'right') {
-    isCharacterOnRight = true;
-  }
+    typeof positionSource === 'string' ? positionSource.trim().toLowerCase() : null;
+  const isCharacterOnRight =
+    rawPosition === 'right' ? true : rawPosition === 'left' ? false : null;
   const backgroundSrc = withCacheBust(
     resolveAssetUrl(page.background),
     `${cacheToken}-background-${pageLabel}`
@@ -1874,27 +1870,33 @@ const normaliseAssetPages = (pages) => {
           : pageType === 'dedication' && typeof entry?.dedicationPage?.prompt === 'string'
           ? entry.dedicationPage.prompt
           : entry?.text || '';
-      return {
-        ...entry,
-        pageType,
-        cover,
-        coverPage,
-        dedicationPage,
-        background: entry?.background ? { ...entry.background } : null,
-        character: entry?.character ? { ...entry.character } : null,
-        characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
-        candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
-        selectedCandidateIndex: selectedCandidateIndexSource,
-        generationId: entry?.generationId || null,
-        renderedImage: entry?.renderedImage ? { ...entry.renderedImage } : null,
-        childName: typeof entry?.childName === 'string' ? entry.childName : '',
-        rankingSummary: rankingSummarySource,
-        rankingNotes: rankingNotesSource.map((note) => ({ ...note })),
-        prompt: pagePrompt,
-        characterPosition: entry?.characterPosition || 'auto',
-        characterPositionResolved: entry?.characterPositionResolved || null,
-      };
-    })
+     return {
+       ...entry,
+       pageType,
+       cover,
+       coverPage,
+       dedicationPage,
+       background: entry?.background ? { ...entry.background } : null,
+       character: entry?.character ? { ...entry.character } : null,
+       characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
+       candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
+       selectedCandidateIndex: selectedCandidateIndexSource,
+       generationId: entry?.generationId || null,
+       renderedImage: entry?.renderedImage ? { ...entry.renderedImage } : null,
+       childName: typeof entry?.childName === 'string' ? entry.childName : '',
+       rankingSummary: rankingSummarySource,
+       rankingNotes: rankingNotesSource.map((note) => ({ ...note })),
+       prompt: pagePrompt,
+        characterPosition:
+          typeof entry?.characterPosition === 'string' ? entry.characterPosition : null,
+        characterPositionResolved:
+          typeof entry?.characterPositionResolved === 'string'
+            ? entry.characterPositionResolved
+            : typeof entry?.characterPosition === 'string'
+            ? entry.characterPosition
+            : null,
+     };
+   })
     .sort((a, b) => {
       const priorityDiff =
         (pageTypePriority[a.pageType] || 0) - (pageTypePriority[b.pageType] || 0);
@@ -2135,8 +2137,14 @@ function Storybooks() {
               promptMale,
               promptFemale,
               useCharacter: true,
-              characterPosition: page.characterPosition || 'auto',
-              characterPositionResolved: page.characterPositionResolved || null,
+              characterPosition:
+                typeof page.characterPosition === 'string' ? page.characterPosition : null,
+              characterPositionResolved:
+                typeof page.characterPositionResolved === 'string'
+                  ? page.characterPositionResolved
+                  : typeof page.characterPosition === 'string'
+                  ? page.characterPosition
+                  : null,
               backgroundImageUrl:
                 page.backgroundImage?.url || page.characterImage?.url || '',
               characterFile: null,
