@@ -751,26 +751,13 @@ const buildCoverPageContent = ({
 }) => {
   const coverPage = sanitizeCoverPageForSnapshot(book.coverPage) || {};
 
-  const firstStoryBackground = storyPages.find((page) =>
-    Boolean(page?.background && (page.background.key || page.background.url))
-  );
-  const firstStoryCharacter = storyPages.find((page) =>
-    Boolean(page?.character && (page.character.key || page.character.url))
-  );
-
-  if (!coverPage.backgroundImage && firstStoryBackground?.background) {
-    coverPage.backgroundImage = sanitizeAssetForSnapshot(firstStoryBackground.background);
-  }
-  if (!coverPage.characterImage && firstStoryCharacter?.character) {
-    coverPage.characterImage = sanitizeAssetForSnapshot(firstStoryCharacter.character);
-  }
-
   if (!coverPage.backgroundImage) {
     return null;
   }
 
   coverPage.characterImage = coverPage.characterImage || null;
-  coverPage.characterImageOriginal = coverPage.characterImageOriginal || coverPage.characterImage || null;
+  coverPage.characterImageOriginal =
+    coverPage.characterImageOriginal || coverPage.characterImage || null;
   const coverPrompt = resolvePromptByGender(coverPage, readerGender);
   coverPage.characterPrompt = coverPrompt;
 
@@ -818,27 +805,6 @@ const buildDedicationPageContent = ({
   } else if (dedicationPage.secondTitle && readerName) {
     // If no user secondTitle, use book's secondTitle with name replacement
     dedicationPage.secondTitle = dedicationPage.secondTitle.replace(/\{name\}/gi, readerName);
-  }
-
-  const firstStoryBackground = storyPages.find((page) =>
-    Boolean(page?.background && (page.background.key || page.background.url))
-  );
-  const firstStoryCharacterOriginal = storyPages.find((page) =>
-    Boolean(page?.characterOriginal && (page.characterOriginal.key || page.characterOriginal.url))
-  );
-  const firstStoryCharacter = storyPages.find((page) =>
-    Boolean(page?.character && (page.character.key || page.character.url))
-  );
-
-  if (!dedicationPage.backgroundImage && firstStoryBackground?.background) {
-    dedicationPage.backgroundImage = sanitizeAssetForSnapshot(firstStoryBackground.background);
-  }
-  if (!dedicationPage.kidImage) {
-    const fallbackKid =
-      (firstStoryCharacterOriginal && firstStoryCharacterOriginal.characterOriginal) ||
-      (firstStoryCharacter && firstStoryCharacter.character) ||
-      null;
-    dedicationPage.kidImage = fallbackKid ? sanitizeAssetForSnapshot(fallbackKid) : null;
   }
 
   if (!dedicationPage.backgroundImage) {

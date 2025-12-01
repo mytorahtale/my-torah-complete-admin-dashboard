@@ -853,19 +853,18 @@ async function generateStorybookPdf({ title, pages }) {
     const pageWidth = isCoverPage ? COVER_PAGE_WIDTH : PAGE_WIDTH;
     const pageHeight = isCoverPage ? COVER_PAGE_HEIGHT : PAGE_HEIGHT;
     const page = pdfDoc.addPage([pageWidth, pageHeight]);
-    pageData.characterPositionResolved = 'auto';
     const isDedicationPage = pageType === 'dedication';
     const positionPreferenceRaw =
-      typeof pageData.characterPosition === 'string'
+      typeof pageData.characterPositionResolved === 'string'
+        ? pageData.characterPositionResolved.trim().toLowerCase()
+        : typeof pageData.characterPosition === 'string'
         ? pageData.characterPosition.trim().toLowerCase()
-        : 'auto';
-    const isCharacterOnRight =
-      positionPreferenceRaw === 'right'
-        ? true
-        : positionPreferenceRaw === 'left'
-        ? false
-        : index % 2 === 0;
-    pageData.characterPositionResolved = isCharacterOnRight ? 'right' : 'left';
+        : null;
+    if (positionPreferenceRaw !== 'left' && positionPreferenceRaw !== 'right') {
+      throw new Error('Story page is missing a valid character position');
+    }
+    const isCharacterOnRight = positionPreferenceRaw === 'right';
+    pageData.characterPositionResolved = positionPreferenceRaw;
     let charWidth = 0;
     let charHeight = 0;
     // Apply 0.125" margin (STORY_MARGIN_PDF) for character positioning

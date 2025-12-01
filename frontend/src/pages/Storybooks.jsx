@@ -1280,9 +1280,9 @@ const buildPagePreviewModel = ({
 
   if (pageType === 'cover') {
     const coverPage = page.coverPage || {};
-    const backgroundAsset = coverPage.backgroundImage || page.background || null;
-    const characterAsset = coverPage.characterImage || page.character || null;
-    const qrAsset = coverPage.qrCode || page.cover?.qrCodeImage || null;
+    const backgroundAsset = coverPage.backgroundImage || null;
+    const characterAsset = coverPage.characterImage || null;
+    const qrAsset = coverPage.qrCode || null;
 
     const backgroundSrc = withCacheBust(
       resolveAssetUrl(backgroundAsset),
@@ -1351,7 +1351,7 @@ const buildPagePreviewModel = ({
 
   if (pageType === 'dedication') {
     const dedicationPage = page.dedicationPage || {};
-    const backgroundAsset = dedicationPage.backgroundImage || page.background || null;
+    const backgroundAsset = dedicationPage.backgroundImage || null;
     const kidAsset = dedicationPage.generatedImage || dedicationPage.kidImage || null;
 
     const backgroundSrc = withCacheBust(
@@ -3488,51 +3488,20 @@ function Storybooks() {
 
     if (currentPage) {
       if (currentPageType === 'cover') {
-        const coverSource = selectedBook?.coverPage || {};
         const coverSnapshot = currentPage.coverPage || {};
-        promptNeutral =
-          normalisePromptText(coverSource.characterPrompt) ||
-          normalisePromptText(coverSnapshot.characterPrompt) ||
-          '';
-        promptMale =
-          normalisePromptText(coverSource.characterPromptMale) ||
-          normalisePromptText(coverSnapshot.characterPromptMale) ||
-          '';
-        promptFemale =
-          normalisePromptText(coverSource.characterPromptFemale) ||
-          normalisePromptText(coverSnapshot.characterPromptFemale) ||
-          '';
+        promptNeutral = normalisePromptText(coverSnapshot.characterPrompt) || '';
+        promptMale = normalisePromptText(coverSnapshot.characterPromptMale) || '';
+        promptFemale = normalisePromptText(coverSnapshot.characterPromptFemale) || '';
       } else if (currentPageType === 'dedication') {
-        const dedicationSource = selectedBook?.dedicationPage || {};
         const dedicationSnapshot = currentPage.dedicationPage || {};
-        promptNeutral =
-          normalisePromptText(dedicationSource.characterPrompt) ||
-          normalisePromptText(dedicationSnapshot.characterPrompt) ||
-          '';
-        promptMale =
-          normalisePromptText(dedicationSource.characterPromptMale) ||
-          normalisePromptText(dedicationSnapshot.characterPromptMale) ||
-          '';
-        promptFemale =
-          normalisePromptText(dedicationSource.characterPromptFemale) ||
-          normalisePromptText(dedicationSnapshot.characterPromptFemale) ||
-          '';
+        promptNeutral = normalisePromptText(dedicationSnapshot.characterPrompt) || '';
+        promptMale = normalisePromptText(dedicationSnapshot.characterPromptMale) || '';
+        promptFemale = normalisePromptText(dedicationSnapshot.characterPromptFemale) || '';
       } else {
-        const sourcePage =
-          selectedBook?.pages?.find(
-            (page) =>
-              (page.pageType === 'story' || !page.pageType) && page.order === currentPage.order
-          ) || null;
-        promptNeutral =
-          normalisePromptText(sourcePage?.characterPrompt) ||
-          normalisePromptText(currentPage.prompt) ||
-          '';
-        promptMale =
-          normalisePromptText(sourcePage?.characterPromptMale) ||
-          '';
+        promptNeutral = normalisePromptText(currentPage.prompt) || '';
+        promptMale = normalisePromptText(currentPage.characterPromptMale || currentPage.prompt) || '';
         promptFemale =
-          normalisePromptText(sourcePage?.characterPromptFemale) ||
-          '';
+          normalisePromptText(currentPage.characterPromptFemale || currentPage.prompt) || '';
       }
     }
 
