@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  Copy,
 } from 'lucide-react';
 import { bookAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -196,6 +197,10 @@ function Books() {
     byGender: { male: 0, female: 0, both: 0 },
   });
   const [loadingBookDetailId, setLoadingBookDetailId] = useState(null);
+  const [duplicateForm, setDuplicateForm] = useState({ sourceId: '', name: '' });
+  const [isDuplicating, setIsDuplicating] = useState(false);
+  const [duplicateOptions, setDuplicateOptions] = useState([]);
+  const [isLoadingDuplicateOptions, setIsLoadingDuplicateOptions] = useState(false);
   const formCardRef = useRef(null);
   const latestLoadRequestRef = useRef(null);
   useEffect(() => {
@@ -318,6 +323,29 @@ function Books() {
     [page, limit, debouncedSearch, statusFilter, genderFilter]
   );
 
+  const loadDuplicateOptions = useCallback(async () => {
+    try {
+      setIsLoadingDuplicateOptions(true);
+      const response = await bookAPI.getAll({
+        minimal: true,
+        limit: 500,
+        status: 'all',
+        gender: 'all',
+        page: 1,
+      });
+      const options = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+        ? response
+        : [];
+      setDuplicateOptions(options);
+    } catch (error) {
+      toast.error(`Failed to load books for duplication: ${error.message}`);
+    } finally {
+      setIsLoadingDuplicateOptions(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!hasInitialisedRef.current) {
       hasInitialisedRef.current = true;
@@ -326,6 +354,10 @@ function Books() {
     }
     fetchBooks({ withSpinner: false });
   }, [fetchBooks]);
+
+  useEffect(() => {
+    loadDuplicateOptions();
+  }, [loadDuplicateOptions]);
 
   const totalBooksCount =
     typeof stats.totalBooks === 'number' && stats.totalBooks >= 0
@@ -343,6 +375,14 @@ function Books() {
       return sum + (Array.isArray(book.pages) ? book.pages.length : 0);
     }, 0);
   }, [stats.totalPages, books]);
+
+  const duplicateOptionsSorted = useMemo(
+    () =>
+      [...duplicateOptions].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+      ),
+    [duplicateOptions]
+  );
 
   const effectivePageSize =
     pagination.limit && pagination.limit > 0 ? pagination.limit : limit;
@@ -395,14 +435,23 @@ function Books() {
       }
     });
     // Revoke cover page image URLs
-  if (formState.coverPage) {
-    revokeIfNeeded(formState.coverPage.backgroundImage?.preview, formState.coverPage.backgroundImage?.previewIsObject);
-    revokeIfNeeded(formState.coverPage.qrCode?.preview, formState.coverPage.qrCode?.previewIsObject);
-  }
-  // Revoke dedication page image URLs
-  if (formState.dedicationPage) {
-    revokeIfNeeded(formState.dedicationPage.backgroundImage?.preview, formState.dedicationPage.backgroundImage?.previewIsObject);
-  }
+    if (formState.coverPage) {
+      revokeIfNeeded(
+        formState.coverPage.backgroundImage?.preview,
+        formState.coverPage.backgroundImage?.previewIsObject
+      );
+      revokeIfNeeded(
+        formState.coverPage.qrCode?.preview,
+        formState.coverPage.qrCode?.previewIsObject
+      );
+    }
+    // Revoke dedication page image URLs
+    if (formState.dedicationPage) {
+      revokeIfNeeded(
+        formState.dedicationPage.backgroundImage?.preview,
+        formState.dedicationPage.backgroundImage?.previewIsObject
+      );
+    }
     setFormState(createEmptyBookForm());
     setEditingBook(null);
     setFormMode('create');
@@ -1399,6 +1448,7 @@ const handleRemovePageImage = (index) => {
         toast.success('Book created');
       }
       await fetchBooks({ withSpinner: false });
+      await loadDuplicateOptions();
       resetForm();
     } catch (error) {
       toast.error(`Failed to save book: ${error.message}`);
@@ -1412,6 +1462,7 @@ const handleRemovePageImage = (index) => {
       await bookAPI.delete(bookId);
       toast.success('Book deleted');
       fetchBooks({ withSpinner: false });
+      loadDuplicateOptions();
     } catch (error) {
       toast.error(`Failed to delete book: ${error.message}`);
     }
@@ -1427,6 +1478,40 @@ const handleRemovePageImage = (index) => {
       fetchBooks({ withSpinner: false });
     } catch (error) {
       toast.error(`Failed to update status: ${error.message}`);
+    }
+  };
+
+  const handleDuplicateSubmit = async (event) => {
+    event.preventDefault();
+    if (isDuplicating) return;
+
+    const trimmedName = duplicateForm.name.trim();
+    if (!duplicateForm.sourceId) {
+      toast.error('Select a book to duplicate');
+      return;
+    }
+    if (!trimmedName) {
+      toast.error('Enter a name for the new book');
+      return;
+    }
+
+    setIsDuplicating(true);
+    try {
+      const response = await bookAPI.duplicate(duplicateForm.sourceId, {
+        name: trimmedName,
+      });
+      const duplicatedBook = response?.data || response;
+      toast.success('Book duplicated');
+      await fetchBooks({ withSpinner: false });
+      await loadDuplicateOptions();
+      setDuplicateForm({ sourceId: '', name: '' });
+      if (duplicatedBook) {
+        openEditForm(duplicatedBook);
+      }
+    } catch (error) {
+      toast.error(`Failed to duplicate book: ${error.message}`);
+    } finally {
+      setIsDuplicating(false);
     }
   };
 
@@ -1515,11 +1600,108 @@ const handleRemovePageImage = (index) => {
       </div>
 
       {loadingBookDetailId ? (
-        <div className="flex items-center gap-2 text-sm text-foreground/60">
+      <div className="flex items-center gap-2 text-sm text-foreground/60">
           <Loader2 className="h-4 w-4 animate-spin text-accent" />
           Loading book details…
         </div>
       ) : null}
+
+      <Card className="border-dashed border-border/60 bg-muted/10">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Copy className="h-4 w-4 text-foreground/70" />
+            Duplicate an existing book
+          </CardTitle>
+          <CardDescription>
+            Deep copy every page and asset from an existing title. We pull each file from S3 and
+            re-upload it under the new book so you can safely edit without touching the original.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={handleDuplicateSubmit}
+            className="grid grid-cols-1 gap-4 md:grid-cols-[2fr_3fr_auto]"
+          >
+            <div className="space-y-2">
+              <Label>Source book</Label>
+              <Select
+                value={duplicateForm.sourceId}
+                onValueChange={(value) =>
+                  setDuplicateForm((prev) => {
+                    const selected = duplicateOptionsSorted.find(
+                      (option) => option._id === value
+                    );
+                    const suggestedName =
+                      !prev.name && selected?.name
+                        ? `${selected.name} (Copy)`
+                        : prev.name;
+                    return { ...prev, sourceId: value, name: suggestedName };
+                  })
+                }
+                disabled={isLoadingDuplicateOptions || isDuplicating}
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      isLoadingDuplicateOptions
+                        ? 'Loading books…'
+                        : 'Choose a book to duplicate'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {duplicateOptionsSorted.length === 0 ? (
+                    <SelectItem value="__empty" disabled>
+                      {isLoadingDuplicateOptions ? 'Loading…' : 'No books available'}
+                    </SelectItem>
+                  ) : (
+                    duplicateOptionsSorted.map((book) => (
+                      <SelectItem key={book._id} value={book._id}>
+                        {book.name}
+                        {book.status ? ` (${book.status})` : ''}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="duplicate-name">New book title</Label>
+              <Input
+                id="duplicate-name"
+                value={duplicateForm.name}
+                onChange={(event) =>
+                  setDuplicateForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+                placeholder="e.g. My Adventure (Copy)"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="submit"
+                className="w-full gap-2"
+                disabled={
+                  isDuplicating ||
+                  isLoadingDuplicateOptions ||
+                  duplicateOptionsSorted.length === 0
+                }
+              >
+                {isDuplicating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Duplicating…
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    Duplicate book
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto]">
         <div className="space-y-2">

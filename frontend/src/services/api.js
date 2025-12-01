@@ -56,6 +56,7 @@ export const bookAPI = {
     }
     return api.put(`/books/${id}/editable`, data);
   },
+  duplicate: (id, data) => api.post(`/books/${id}/duplicate`, data),
   delete: (id) => api.delete(`/books/${id}`),
   updateStatus: (id, status) => api.patch(`/books/${id}/status`, { status }),
   generateStorybook: (id, data) =>

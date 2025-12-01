@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const path = require('path');
 const { validationResult } = require('express-validator');
 const Book = require('../models/Book');
 const User = require('../models/User');
@@ -29,6 +30,28 @@ const slugify = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+
+const sanitizeFileName = (value, fallback = 'asset') => {
+  const safeFallback = fallback || 'asset';
+  if (!value || typeof value !== 'string') {
+    return `${safeFallback}-${Date.now()}`;
+  }
+  return path
+    .basename(value)
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .toLowerCase();
+};
+
+const buildCoverPageAssetKey = (bookSlug, type, originalName) => {
+  const safeName = sanitizeFileName(originalName, `${type || 'asset'}.png`);
+  return `books/${bookSlug}/cover-page/${type || 'asset'}-${Date.now()}-${safeName}`;
+};
+
+const buildDedicationPageAssetKey = (bookSlug, type, originalName) => {
+  const safeName = sanitizeFileName(originalName, `${type || 'asset'}.png`);
+  return `books/${bookSlug}/dedication-page/${type || 'asset'}-${Date.now()}-${safeName}`;
+};
 
 const parsePagesPayload = (pages) => {
   if (!pages) return [];
@@ -281,6 +304,51 @@ const cleanupKeys = async (keys = []) => {
       )
     )
   );
+};
+
+const duplicateAssetFromS3 = async ({
+  asset,
+  buildKey,
+  fallbackName,
+  fallbackContentType = 'application/octet-stream',
+  uploadedKeys = [],
+}) => {
+  if (!asset || !asset.key || typeof buildKey !== 'function') {
+    return null;
+  }
+
+  let buffer;
+  try {
+    buffer = await downloadFromS3(asset.key);
+  } catch (error) {
+    throw new Error(`Failed to download asset ${asset.key}: ${error.message}`);
+  }
+
+  if (!buffer || !buffer.length) {
+    throw new Error(`Empty buffer when duplicating asset ${asset.key}`);
+  }
+
+  const originalName = sanitizeFileName(
+    asset.originalName || path.basename(asset.key),
+    fallbackName || 'asset'
+  );
+  const contentType = asset.contentType || fallbackContentType;
+  const key = buildKey(originalName);
+  const { url } = await uploadBufferToS3(buffer, key, contentType, { acl: 'public-read' });
+  uploadedKeys.push(key);
+  const signedUrl = await getSignedUrlForKey(key).catch(() => null);
+
+  return {
+    key,
+    url,
+    signedUrl: signedUrl || asset.signedUrl || null,
+    downloadUrl: url,
+    size: buffer.length,
+    contentType,
+    uploadedAt: new Date(),
+    originalName,
+    backgroundRemoved: Boolean(asset.backgroundRemoved),
+  };
 };
 
 const buildAssetPayload = async (asset) => {
@@ -1231,6 +1299,310 @@ exports.getBookForEdit = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch editable book',
+      error: error.message,
+    });
+  }
+};
+
+exports.duplicateBook = async (req, res) => {
+  const uploadedKeys = [];
+  try {
+    const { id } = req.params;
+    const newName = normalizeString(req.body.name);
+    const requestedStatus = normalizeString(req.body.status);
+    const requestedGender = normalizeGenderValue(req.body.gender);
+    const descriptionOverride =
+      typeof req.body.description === 'string' ? req.body.description : undefined;
+
+    if (!newName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provide a name for the duplicated book',
+      });
+    }
+
+    const sourceBook = await Book.findById(id);
+    if (!sourceBook) {
+      return res.status(404).json({
+        success: false,
+        message: 'Source book not found',
+      });
+    }
+
+    if (!Array.isArray(sourceBook.pages) || sourceBook.pages.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Source book has no pages to duplicate',
+      });
+    }
+
+    const slug = `${slugify(newName)}-${Date.now()}`;
+    const normalizedGender = ['male', 'female', 'both'].includes(requestedGender)
+      ? requestedGender
+      : sourceBook.gender || 'both';
+    const normalizedStatus = ['active', 'inactive'].includes(requestedStatus)
+      ? requestedStatus
+      : sourceBook.status || 'active';
+    const resolvedDescription =
+      typeof descriptionOverride === 'string'
+        ? descriptionOverride
+        : sourceBook.description || '';
+
+    const duplicateCoverImage = async () =>
+      sourceBook.coverImage
+        ? duplicateAssetFromS3({
+            asset: sourceBook.coverImage,
+            buildKey: (originalName) => generateBookCoverKey(slug, originalName),
+            fallbackName: 'cover.jpg',
+            fallbackContentType: sourceBook.coverImage.contentType || 'image/jpeg',
+            uploadedKeys,
+          })
+        : null;
+
+    const duplicateCoverPage = async () => {
+      if (!sourceBook.coverPage) return null;
+
+      const backgroundImage = await duplicateAssetFromS3({
+        asset: sourceBook.coverPage.backgroundImage,
+        buildKey: (originalName) =>
+          buildCoverPageAssetKey(slug, 'background', originalName),
+        fallbackName: 'background.jpg',
+        fallbackContentType:
+          sourceBook.coverPage.backgroundImage?.contentType || 'image/jpeg',
+        uploadedKeys,
+      });
+
+      const qrCode = await duplicateAssetFromS3({
+        asset: sourceBook.coverPage.qrCode,
+        buildKey: (originalName) => buildCoverPageAssetKey(slug, 'qr', originalName),
+        fallbackName: 'qr.png',
+        fallbackContentType: 'image/png',
+        uploadedKeys,
+      });
+
+      const characterImage = await duplicateAssetFromS3({
+        asset: sourceBook.coverPage.characterImage,
+        buildKey: (originalName) =>
+          generateBookCharacterOverlayKey(slug, 0, originalName || 'cover-character.png'),
+        fallbackName: 'cover-character.png',
+        fallbackContentType: sourceBook.coverPage.characterImage?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      const characterImageOriginal = await duplicateAssetFromS3({
+        asset: sourceBook.coverPage.characterImageOriginal,
+        buildKey: (originalName) =>
+          generateBookCharacterOverlayKey(
+            slug,
+            0,
+            originalName || 'cover-character-original.png'
+          ),
+        fallbackName: 'cover-character-original.png',
+        fallbackContentType:
+          sourceBook.coverPage.characterImageOriginal?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      return {
+        backgroundImage,
+        characterImage,
+        characterImageOriginal,
+        characterPrompt: safeText(sourceBook.coverPage.characterPrompt),
+        characterPromptMale: safeText(sourceBook.coverPage.characterPromptMale),
+        characterPromptFemale: safeText(sourceBook.coverPage.characterPromptFemale),
+        leftSide: {
+          title: safeText(sourceBook.coverPage.leftSide?.title),
+          content: safeText(sourceBook.coverPage.leftSide?.content),
+          bottomText: safeText(sourceBook.coverPage.leftSide?.bottomText),
+        },
+        qrCode,
+        rightSide: {
+          mainTitle: safeText(sourceBook.coverPage.rightSide?.mainTitle),
+          subtitle: safeText(sourceBook.coverPage.rightSide?.subtitle),
+        },
+      };
+    };
+
+    const duplicateDedicationPage = async () => {
+      if (!sourceBook.dedicationPage) return null;
+
+      const backgroundImage = await duplicateAssetFromS3({
+        asset: sourceBook.dedicationPage.backgroundImage,
+        buildKey: (originalName) =>
+          buildDedicationPageAssetKey(slug, 'background', originalName),
+        fallbackName: 'background.jpg',
+        fallbackContentType:
+          sourceBook.dedicationPage.backgroundImage?.contentType || 'image/jpeg',
+        uploadedKeys,
+      });
+
+      const kidImage = await duplicateAssetFromS3({
+        asset: sourceBook.dedicationPage.kidImage,
+        buildKey: (originalName) =>
+          buildDedicationPageAssetKey(slug, 'kid', originalName || 'kid.png'),
+        fallbackName: 'kid.png',
+        fallbackContentType: sourceBook.dedicationPage.kidImage?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      const generatedImageOriginal = await duplicateAssetFromS3({
+        asset: sourceBook.dedicationPage.generatedImageOriginal,
+        buildKey: (originalName) =>
+          buildDedicationPageAssetKey(
+            slug,
+            'generated-original',
+            originalName || 'generated-original.png'
+          ),
+        fallbackName: 'generated-original.png',
+        fallbackContentType:
+          sourceBook.dedicationPage.generatedImageOriginal?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      const generatedImage = await duplicateAssetFromS3({
+        asset: sourceBook.dedicationPage.generatedImage,
+        buildKey: (originalName) =>
+          buildDedicationPageAssetKey(
+            slug,
+            'generated',
+            originalName || 'generated.png'
+          ),
+        fallbackName: 'generated.png',
+        fallbackContentType:
+          sourceBook.dedicationPage.generatedImage?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      return {
+        backgroundImage,
+        kidImage,
+        generatedImage,
+        generatedImageOriginal,
+        title: safeText(sourceBook.dedicationPage.title),
+        secondTitle: safeText(sourceBook.dedicationPage.secondTitle),
+        characterPrompt: safeText(sourceBook.dedicationPage.characterPrompt),
+        characterPromptMale: safeText(sourceBook.dedicationPage.characterPromptMale),
+        characterPromptFemale: safeText(sourceBook.dedicationPage.characterPromptFemale),
+      };
+    };
+
+    const sortedPages = [...(sourceBook.pages || [])].sort(
+      (a, b) => (a.order || 0) - (b.order || 0)
+    );
+
+    const pages = [];
+    for (let index = 0; index < sortedPages.length; index += 1) {
+      const page = sortedPages[index];
+      const order = Number(page.order) || index + 1;
+      const pageType =
+        page.pageType === 'cover'
+          ? 'cover'
+          : page.pageType === 'dedication'
+          ? 'dedication'
+          : 'story';
+
+      const backgroundImage = await duplicateAssetFromS3({
+        asset: page.backgroundImage || page.characterImage || null,
+        buildKey: (originalName) =>
+          generateBookPageImageKey(slug, order, originalName || `page-${order}.jpg`),
+        fallbackName: `page-${order}.jpg`,
+        fallbackContentType:
+          (page.backgroundImage || page.characterImage)?.contentType || 'image/jpeg',
+        uploadedKeys,
+      });
+
+      const characterImage = await duplicateAssetFromS3({
+        asset: page.characterImage,
+        buildKey: (originalName) =>
+          generateBookCharacterOverlayKey(
+            slug,
+            order,
+            originalName || `character-${order}.png`
+          ),
+        fallbackName: `character-${order}.png`,
+        fallbackContentType: page.characterImage?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      const characterImageOriginal = await duplicateAssetFromS3({
+        asset: page.characterImageOriginal,
+        buildKey: (originalName) =>
+          generateBookCharacterOverlayKey(
+            slug,
+            order,
+            originalName || `character-original-${order}.png`
+          ),
+        fallbackName: `character-original-${order}.png`,
+        fallbackContentType: page.characterImageOriginal?.contentType || 'image/png',
+        uploadedKeys,
+      });
+
+      let coverConfig = null;
+      if (pageType === 'cover') {
+        const qrCodeImage = await duplicateAssetFromS3({
+          asset: page.cover?.qrCodeImage,
+          buildKey: (originalName) =>
+            generateBookQrCodeKey(slug, order, originalName || `qr-${order}.png`),
+          fallbackName: `qr-${order}.png`,
+          fallbackContentType: page.cover?.qrCodeImage?.contentType || 'image/png',
+          uploadedKeys,
+        });
+
+        coverConfig = mergeCoverConfig(null, page.cover || {});
+        coverConfig.qrCodeImage = qrCodeImage;
+      }
+
+      pages.push({
+        order,
+        text: safeText(page.text),
+        characterPrompt: safeText(page.characterPrompt),
+        characterPromptMale: safeText(page.characterPromptMale),
+        characterPromptFemale: safeText(page.characterPromptFemale),
+        pageType,
+        characterPosition: normalizeCharacterPosition(page.characterPosition, 'auto'),
+        backgroundImage,
+        characterImage,
+        characterImageOriginal,
+        cover: coverConfig,
+      });
+    }
+
+    const [coverImage, coverPage, dedicationPage] = await Promise.all([
+      duplicateCoverImage(),
+      duplicateCoverPage(),
+      duplicateDedicationPage(),
+    ]);
+
+    const duplicatedBook = await Book.create({
+      name: newName,
+      description: resolvedDescription,
+      gender: normalizedGender,
+      status: normalizedStatus,
+      slug,
+      coverImage,
+      pages,
+      coverPage,
+      dedicationPage,
+      pdfAssets: [],
+    });
+
+    const hydratedCopy = await hydrateBookDocument(duplicatedBook);
+    const editablePayload = buildEditableBookResponse(hydratedCopy);
+
+    res.status(201).json({
+      success: true,
+      message: 'Book duplicated successfully',
+      data: editablePayload,
+      meta: {
+        sourceBookId: sourceBook._id.toString(),
+      },
+    });
+  } catch (error) {
+    console.error('Error duplicating book:', error);
+    await cleanupKeys(uploadedKeys);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to duplicate book',
       error: error.message,
     });
   }

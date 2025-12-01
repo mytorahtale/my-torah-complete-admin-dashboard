@@ -72,6 +72,7 @@ router.post(
   '/:id/storybooks/:assetId/pages/:pageOrder/select',
   bookController.selectStorybookPageCandidate
 );
+router.post('/:id/duplicate', bookController.duplicateBook);
 router.get('/:id/editable', bookController.getBookForEdit);
 router.get('/:id', bookController.getBookById);
 router.put(
