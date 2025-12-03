@@ -6,8 +6,6 @@ import {
   Download,
   Workflow,
   AlertTriangle,
-  Crown,
-  Star,
   Loader2,
   RefreshCw,
   ChevronLeft,
@@ -77,20 +75,12 @@ function Generate() {
   const [loading, setLoading] = useState(true);
   const [isFetchingGenerations, setIsFetchingGenerations] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [showRankForm, setShowRankForm] = useState(false);
   const [formData, setFormData] = useState(() => ({
     userId: '',
     trainingId: '',
     prompt: '',
     config: { ...DEFAULT_CONFIG },
   }));
-  const [rankForm, setRankForm] = useState(() => ({
-    userId: '',
-    trainingId: '',
-    prompt: '',
-  }));
-  const [rankTrainings, setRankTrainings] = useState([]);
-  const [isRankGenerating, setIsRankGenerating] = useState(false);
   const [generationPage, setGenerationPage] = useState(1);
   const [generationLimit, setGenerationLimit] = useState(GENERATION_PAGE_SIZES[0]);
   const [generationSearch, setGenerationSearch] = useState('');
@@ -417,25 +407,6 @@ function Generate() {
     }
   };
 
-  const handleRankUserChange = async (userId) => {
-    setRankForm((prev) => ({
-      ...prev,
-      userId,
-      trainingId: '',
-    }));
-
-    if (!userId) {
-      setRankTrainings([]);
-      return;
-    }
-
-    try {
-      await fetchTrainingsForUser(userId, setRankTrainings);
-    } catch (error) {
-      toast.error(`Failed to fetch trainings: ${error.message}`);
-    }
-  };
-
   const handleConfigUpdate = (key, value) => {
     setFormData((prev) => ({
       ...prev,
@@ -460,35 +431,6 @@ function Generate() {
     }
   };
 
-  const handleRankSubmit = async (event) => {
-    event.preventDefault();
-
-    if (!rankForm.userId || !rankForm.trainingId || !rankForm.prompt.trim()) {
-      toast.error('Select a user, model, and enter a prompt');
-      return;
-    }
-
-    setIsRankGenerating(true);
-    try {
-      const payload = {
-        userId: rankForm.userId,
-        trainingId: rankForm.trainingId,
-        prompt: rankForm.prompt.trim(),
-      };
-
-      await generationAPI.createRanked(payload);
-      toast.success('Generated and ranked images successfully');
-      resetRankForm();
-      fetchGenerations({ silent: true }).catch((error) =>
-        console.warn('Failed to refresh generations after ranked create', error)
-      );
-    } catch (error) {
-      toast.error(`Failed to generate ranked images: ${error.message}`);
-    } finally {
-      setIsRankGenerating(false);
-    }
-  };
-
   const handleDownload = async (id) => {
     try {
       await generationAPI.download(id);
@@ -507,16 +449,6 @@ function Generate() {
     });
     setTrainings([]);
     setShowForm(false);
-  };
-
-  const resetRankForm = () => {
-    setRankForm({
-      userId: '',
-      trainingId: '',
-      prompt: '',
-    });
-    setRankTrainings([]);
-    setShowRankForm(false);
   };
 
   const handleGenerationResetFilters = useCallback(() => {
@@ -611,14 +543,6 @@ function Generate() {
           <Button className="gap-2" onClick={() => setShowForm((prev) => !prev)}>
             <Sparkles className="h-4 w-4" />
             {showForm ? 'Close form' : 'Generate images'}
-          </Button>
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => setShowRankForm((prev) => !prev)}
-          >
-            <Crown className="h-4 w-4" />
-            {showRankForm ? 'Close ranking' : 'Ranked generation'}
           </Button>
         </div>
       </div>
@@ -796,95 +720,6 @@ function Generate() {
         </Card>
       )}
 
-      {showRankForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Generate & rank images</CardTitle>
-            <CardDescription>
-              Produce four high-quality PNG renders, then let the LLM score and rank them automatically.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleRankSubmit} className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label>User *</Label>
-                  <SearchableSelect
-                    value={rankForm.userId}
-                    onValueChange={handleRankUserChange}
-                    options={users.map((user) => ({
-                      value: user._id,
-                      label: `${user.name} · ${user.email}`,
-                      searchText: `${user.name} ${user.email}`,
-                    }))}
-                    placeholder="Select user"
-                    searchPlaceholder="Search users..."
-                    emptyText="No users found."
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Trained model *</Label>
-                  <SearchableSelect
-                    value={rankForm.trainingId}
-                    onValueChange={(value) => setRankForm((prev) => ({ ...prev, trainingId: value }))}
-                    options={rankTrainings.map((training) => ({
-                      value: training._id,
-                      label: `${training.modelName} · ${training.completedAt ? new Date(training.completedAt).toLocaleDateString() : 'recent'}`,
-                      searchText: `${training.modelName}`,
-                    }))}
-                    placeholder={rankForm.userId ? 'Select model' : 'Pick a user first'}
-                    searchPlaceholder="Search models..."
-                    emptyText="No models found."
-                    disabled={!rankForm.userId || rankTrainings.length === 0}
-                  />
-                  {rankForm.userId && rankTrainings.length === 0 && (
-                    <p className="text-xs text-foreground/60">
-                      No successful trainings found for this user yet.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="rankPrompt">Prompt *</Label>
-                <Textarea
-                  id="rankPrompt"
-                  value={rankForm.prompt}
-                  onChange={(event) =>
-                    setRankForm((prev) => ({ ...prev, prompt: event.target.value }))
-                  }
-                  rows={4}
-                  placeholder="Describe the scene you’d like to compare..."
-                  required
-                />
-                <p className="text-xs text-foreground/50">
-                  The system will render four PNGs with guidance scale 2 and quality 100, then rank them for you.
-                </p>
-              </div>
-
-              <CardFooter className="flex flex-col gap-3 border-none bg-transparent p-0 sm:flex-row sm:justify-end">
-                <Button type="button" variant="secondary" onClick={resetRankForm} disabled={isRankGenerating}>
-                  Cancel
-                </Button>
-                <Button type="submit" className="gap-2" disabled={isRankGenerating}>
-                  {isRankGenerating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Ranking...
-                    </>
-                  ) : (
-                    <>
-                      <Crown className="h-4 w-4" />
-                      Generate & rank
-                    </>
-                  )}
-                </Button>
-              </CardFooter>
-            </form>
-          </CardContent>
-        </Card>
-      )}
-
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-foreground">Generation feed</h3>
@@ -979,25 +814,7 @@ function Generate() {
             const rawAssets = generation.imageAssets?.length
               ? generation.imageAssets
               : generation.imageUrls?.map((url) => ({ url })) || [];
-            const assetMap = new Map();
-            rawAssets.forEach((asset, idx) => {
-              assetMap.set(idx + 1, asset);
-            });
-
-            const rankedAssets = generation.ranking?.ranked?.length
-              ? generation.ranking.ranked
-                  .slice()
-                  .sort((a, b) => a.rank - b.rank)
-                  .map((entry) => ({
-                    entry,
-                    asset: assetMap.get(entry.imageIndex) || rawAssets[entry.imageIndex - 1] || null,
-                  }))
-                  .filter((item) => item.asset)
-              : null;
-
-            const imageItems = rankedAssets
-              ? rankedAssets.map((item) => ({ ...item.asset, rankingMeta: item.entry }))
-              : rawAssets;
+            const imageItems = rawAssets;
 
             const hasProgress =
               typeof generation.progress === 'number' && Number.isFinite(generation.progress);
@@ -1037,27 +854,6 @@ function Generate() {
                     <span className="font-semibold text-foreground/70">Prompt: </span>
                     {generation.prompt}
                   </div>
-                  {generation.ranking?.summary ? (
-                    <div className="rounded-lg border border-border/60 bg-card/70 p-3 text-xs text-foreground/65">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <span className="font-semibold text-foreground/75">Ranking summary</span>
-                          <p className="mt-1 text-foreground/60">{generation.ranking.summary}</p>
-                          {generation.ranking.promptReflection ? (
-                            <p className="mt-2 text-[11px] text-foreground/45">
-                              {generation.ranking.promptReflection}
-                            </p>
-                          ) : null}
-                        </div>
-                        {generation.ranking.winners?.length ? (
-                          <Badge variant="success" className="gap-1">
-                            <Star className="h-3 w-3" /> Top
-                            {generation.ranking.winners.map((idx) => ` #${idx}`).join(', ')}
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
                   <div className="flex flex-wrap gap-3 text-xs text-foreground/45">
                     <span>Created {new Date(generation.createdAt).toLocaleString()}</span>
                     {generation.completedAt && (
@@ -1176,29 +972,8 @@ function Generate() {
                           />
                           <div className="flex items-center justify-between px-3 py-2 text-xs text-foreground/60">
                             <span className="flex items-center gap-1 font-medium text-foreground/75">
-                              {image.rankingMeta ? (
-                                <span>
-                                  Rank {image.rankingMeta.rank} · Image {image.rankingMeta.imageIndex}
-                                </span>
-                              ) : (
-                                <span>Output {index + 1}</span>
-                              )}
+                              Output {index + 1}
                             </span>
-                            {image.rankingMeta ? (
-                              <Badge
-                                variant={
-                                  image.rankingMeta.verdict === 'excellent'
-                                    ? 'success'
-                                    : image.rankingMeta.verdict === 'good'
-                                    ? 'default'
-                                    : image.rankingMeta.verdict === 'fair'
-                                    ? 'warning'
-                                    : 'destructive'
-                                }
-                              >
-                                {image.rankingMeta.score}%
-                              </Badge>
-                            ) : null}
                             <a
                               href={image.downloadUrl || image.url}
                               target="_blank"
@@ -1209,11 +984,6 @@ function Generate() {
                               View
                             </a>
                           </div>
-                          {image.rankingMeta?.notes ? (
-                            <div className="border-t border-border/60 bg-card/80 px-3 py-2 text-[11px] text-foreground/55">
-                              {image.rankingMeta.notes}
-                            </div>
-                          ) : null}
                         </div>
                       ))}
                     </div>

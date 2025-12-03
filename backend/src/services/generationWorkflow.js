@@ -2,10 +2,9 @@ const Generation = require('../models/Generation');
 const User = require('../models/User');
 const { replicate } = require('../config/replicate');
 const { extractProgressFromReplicate } = require('../utils/replicate');
-const { uploadGenerationOutputs, getSignedDownloadUrls } = require('./generationOutputs');
+const { uploadGenerationOutputs } = require('./generationOutputs');
 const { emitGenerationUpdate } = require('./generationEvents');
 const { buildWebhookUrl } = require('../utils/webhook');
-const { rankGeneratedImages } = require('./rankingService');
 
 const MAX_ATTEMPTS = Number(process.env.GENERATION_MAX_ATTEMPTS || 3);
 const WEBHOOK_EVENTS = ['start', 'logs', 'output', 'completed'];
@@ -348,24 +347,17 @@ const processPredictionEvent = async ({ generationId, prediction, eventType }) =
           fallbackContentType,
         });
 
-        const isRankedMode =
-          generation.generationConfig?.mode === 'ranked' ||
-          generation.generationConfig?.model === 'ranked';
-
         set.status = 'succeeded';
         set.imageUrls = imageUrls;
         set.imageAssets = imageAssets;
 
         const currentProgressAfterUpload =
           set.progress !== undefined ? set.progress : generation.progress || 0;
-        const uploadProgress = isRankedMode ? 90 : 100;
+        const uploadProgress = 100;
         if (uploadProgress > currentProgressAfterUpload) {
           set.progress = uploadProgress;
         }
-
-        if (!isRankedMode) {
-          set.completedAt = now;
-        }
+        set.completedAt = now;
 
         events.push({
           type: 'outputs-uploaded',
@@ -374,85 +366,14 @@ const processPredictionEvent = async ({ generationId, prediction, eventType }) =
           timestamp: now,
         });
 
-        if (isRankedMode) {
-          const rankStartTime = new Date();
-          events.push({
-            type: 'ranking',
-            message: 'Ranking generated images with LLM evaluator',
-            metadata: { count: imageAssets.length },
-            timestamp: rankStartTime,
-          });
-
-          const currentProgress =
-            set.progress !== undefined ? set.progress : generation.progress || 0;
-          if (currentProgress < 95) {
-            set.progress = 95;
-          }
-
-          try {
-            const signedAssets = await getSignedDownloadUrls(imageAssets);
-            const userDoc = await User.findById(generation.userId).select('name gender age');
-
-            const ranking = await rankGeneratedImages({
-              prompt: generation.prompt,
-              assets: signedAssets,
-              childProfile: userDoc
-                ? {
-                    name: userDoc.name,
-                    gender: userDoc.gender,
-                    age: userDoc.age,
-                  }
-                : null,
-            });
-
-            set.ranking = {
-              summary: ranking.summary,
-              promptReflection: ranking.promptReflection || '',
-              winners:
-                ranking.winners && ranking.winners.length
-                  ? ranking.winners
-                  : [ranking.ranked[0]?.imageIndex || 1],
-              ranked: ranking.ranked,
-              createdAt: new Date(),
-              raw: ranking.raw || null,
-              childProfile: ranking.childProfile,
-            };
-
-            set.progress = 100;
-            set.completedAt = new Date();
-
-            events.push({
-              type: 'ranking-complete',
-              message: 'Ranking completed successfully',
-              metadata: {
-                winners: set.ranking.winners,
-              },
-              timestamp: new Date(),
-            });
-
-            events.push({
-              type: 'succeeded',
-              message: 'Ranked generation finished',
-              metadata: {
-                totalOutputs: imageAssets.length,
-              },
-              timestamp: new Date(),
-            });
-          } catch (rankingError) {
-            events.push({
-              type: 'ranking-error',
-              message: `Ranking failed: ${rankingError.message}`,
-              metadata: {},
-              timestamp: new Date(),
-            });
-            set.status = 'failed';
-            set.error = `Ranking failed: ${rankingError.message}`;
-            set.completedAt = new Date();
-          }
-        }
-        else {
-          set.completedAt = now;
-        }
+        events.push({
+          type: 'succeeded',
+          message: 'Generation finished',
+          metadata: {
+            totalOutputs: imageAssets.length,
+          },
+          timestamp: new Date(),
+        });
       }
     } else {
       const failureMessage = prediction.error || 'Generation failed';

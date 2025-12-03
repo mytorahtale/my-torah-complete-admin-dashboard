@@ -7,7 +7,6 @@ const AutomationRun = require('../models/AutomationRun');
 const User = require('../models/User');
 const Book = require('../models/Book');
 const Training = require('../models/Training');
-const { evaluateSingleImage } = require('./evaluator');
 const {
   uploadBufferToS3,
   deleteFromS3,
@@ -587,26 +586,6 @@ const createAutomationRun = async ({ bookId, userInput, files, overrides = [] })
 
     for (let index = 0; index < maxAssets.length; index += 1) {
       const file = maxAssets[index];
-      const override = overrides[index] === true || overrides[index] === 'true';
-
-      const base64 = file.buffer.toString('base64');
-      let evaluation;
-      try {
-        evaluation = await evaluateSingleImage({
-          name: file.originalname,
-          mimeType: file.mimetype,
-          base64,
-        });
-      } catch (error) {
-        throw new Error(error.message || 'Image evaluation failed');
-      }
-
-      const imageEvaluation = Array.isArray(evaluation?.images) ? evaluation.images[0] : null;
-      if (!override && (!imageEvaluation || !imageEvaluation.acceptable)) {
-        throw new Error(
-          `Image "${file.originalname}" rejected by evaluator. Enable override if you still want to include it.`
-        );
-      }
 
       const key = generateImageKey(user._id, file.originalname);
       const uploadResult = await uploadBufferToS3(file.buffer, key, file.mimetype);
@@ -618,18 +597,6 @@ const createAutomationRun = async ({ bookId, userInput, files, overrides = [] })
         contentType: file.mimetype || guessContentType(file.originalname),
         uploadedAt: new Date(),
         originalName: file.originalname,
-        evaluation: imageEvaluation
-          ? {
-              verdict: imageEvaluation.verdict,
-              acceptable: Boolean(imageEvaluation.acceptable),
-              scorePercent: imageEvaluation.overallScorePercent ?? null,
-              confidencePercent: imageEvaluation.confidencePercent ?? null,
-              summary: evaluation?.overallAcceptance?.summary || '',
-              override,
-            }
-          : {
-              override,
-            },
       };
 
       processedAssets.push({

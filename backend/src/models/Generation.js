@@ -15,30 +15,6 @@ const generationImageAssetSchema = new mongoose.Schema(
   { _id: true }
 );
 
-const rankingEntrySchema = new mongoose.Schema(
-  {
-    imageIndex: { type: Number, required: true, min: 1 },
-    rank: { type: Number, required: true, min: 1 },
-    score: { type: Number, required: true, min: 0, max: 100 },
-    verdict: {
-      type: String,
-      enum: ['excellent', 'good', 'fair', 'poor'],
-      default: 'good',
-    },
-    notes: { type: String, default: '' },
-  },
-  { _id: false }
-);
-
-const rankingChildProfileSchema = new mongoose.Schema(
-  {
-    name: { type: String, default: '' },
-    gender: { type: String, default: '' },
-    age: { type: Number, default: null },
-  },
-  { _id: false }
-);
-
 const generationLogEntrySchema = new mongoose.Schema(
   {
     message: { type: String, required: true },
@@ -53,34 +29,6 @@ const generationEventSchema = new mongoose.Schema(
     message: { type: String, default: '' },
     metadata: { type: mongoose.Schema.Types.Mixed, default: null },
     timestamp: { type: Date, default: Date.now },
-  },
-  { _id: false }
-);
-
-const generationRankingSchema = new mongoose.Schema(
-  {
-    summary: { type: String, default: '' },
-    promptReflection: { type: String, default: '' },
-    winners: {
-      type: [Number],
-      default: [],
-    },
-    ranked: {
-      type: [rankingEntrySchema],
-      default: [],
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    raw: {
-      type: mongoose.Schema.Types.Mixed,
-      default: null,
-    },
-    childProfile: {
-      type: rankingChildProfileSchema,
-      default: null,
-    },
   },
   { _id: false }
 );
@@ -184,10 +132,6 @@ const generationSchema = new mongoose.Schema(
       type: [generationImageAssetSchema],
       default: [],
     },
-    ranking: {
-      type: generationRankingSchema,
-      default: null,
-    },
     error: {
       type: String,
       default: null,
@@ -261,6 +205,7 @@ generationSchema.index({ status: 1 });
 generationSchema.index({ createdAt: -1 });
 generationSchema.index({ replicatePredictionId: 1 });
 generationSchema.index({ 'storybookContext.jobId': 1 });
+generationSchema.index({ 'storybookContext.bookId': 1 });
 
 const Generation = mongoose.model('Generation', generationSchema);
 

@@ -1,7 +1,6 @@
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
 const { uploadBufferToS3, deleteFromS3, generateImageKey } = require('../config/s3');
-const { evaluateSingleImage } = require('../services/evaluator');
 
 const parseBoolean = (value) =>
   typeof value === 'string' ? value === 'true' || value === '1' : Boolean(value);
@@ -399,37 +398,6 @@ exports.uploadImageAsset = async (req, res) => {
       });
     }
 
-    const override = parseBoolean(req.body.override);
-    const base64 = req.file.buffer.toString('base64');
-
-    let evaluation = null;
-    let imageEvaluation = null;
-
-    try {
-      evaluation = await evaluateSingleImage({
-        name: req.file.originalname,
-        mimeType: req.file.mimetype,
-        base64,
-      });
-      imageEvaluation = Array.isArray(evaluation?.images) ? evaluation.images[0] : null;
-    } catch (error) {
-      const statusCode = error.statusCode || error.status || 500;
-      return res.status(statusCode).json({
-        success: false,
-        message: error.message || 'Failed to evaluate image',
-        error: error.details || undefined,
-      });
-    }
-
-    if (!override && (!imageEvaluation || !imageEvaluation.acceptable)) {
-      return res.status(422).json({
-        success: false,
-        message: 'Image rejected by evaluator',
-        evaluation,
-        data: imageEvaluation,
-      });
-    }
-
     const key = generateImageKey(user._id, req.file.originalname);
     const { url } = await uploadBufferToS3(req.file.buffer, key, req.file.mimetype);
 
@@ -440,18 +408,6 @@ exports.uploadImageAsset = async (req, res) => {
       contentType: req.file.mimetype,
       uploadedAt: new Date(),
       originalName: req.file.originalname,
-      evaluation: imageEvaluation
-        ? {
-            verdict: imageEvaluation.verdict,
-            acceptable: Boolean(imageEvaluation.acceptable),
-            scorePercent: imageEvaluation.overallScorePercent ?? null,
-            confidencePercent: imageEvaluation.confidencePercent ?? null,
-            summary: evaluation?.overallAcceptance?.summary || '',
-            override,
-          }
-        : {
-            override,
-          },
     };
 
     user.imageAssets.push(asset);
@@ -459,14 +415,8 @@ exports.uploadImageAsset = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message:
-        override && !imageEvaluation?.acceptable
-          ? 'Image uploaded with override'
-          : 'Image uploaded successfully',
-      data: {
-        asset,
-        evaluation,
-      },
+      message: 'Image uploaded successfully',
+      data: { asset },
     });
   } catch (error) {
     console.error('Error uploading image asset:', error);

@@ -37,9 +37,10 @@ async function uploadGenerationOutputs({
       const detectedContentType = response.headers.get('content-type') || fallbackContentType;
       const fileName = `${generationId}-${index + 1}.${targetFormat}`;
       const key = generateImageKey(userId, fileName);
-      const { url: s3Url } = await uploadBufferToS3(buffer, key, detectedContentType, {
-        acl: 'public-read',
-      });
+      const { url: s3Url, bytes: uploadedBytes, contentType: uploadedContentType } =
+        await uploadBufferToS3(buffer, key, detectedContentType, {
+          acl: 'public-read',
+        });
 
       const signedUrl = await getSignedUrlForKey(key).catch(() => null);
 
@@ -47,8 +48,8 @@ async function uploadGenerationOutputs({
         key,
         url: s3Url,
         signedUrl: signedUrl || s3Url,
-        size: buffer.length,
-        contentType: detectedContentType,
+        size: uploadedBytes,
+        contentType: uploadedContentType || detectedContentType,
         originalName: fileName,
         uploadedAt: new Date(),
       };

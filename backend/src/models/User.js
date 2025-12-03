@@ -12,18 +12,6 @@ const toOptionalLowercaseString = (value) => {
   return trimmed === '' ? undefined : trimmed.toLowerCase();
 };
 
-const evaluationSchema = new mongoose.Schema(
-  {
-    verdict: { type: String, default: null },
-    acceptable: { type: Boolean, default: null },
-    scorePercent: { type: Number, default: null },
-    confidencePercent: { type: Number, default: null },
-    summary: { type: String, default: '' },
-    override: { type: Boolean, default: false },
-  },
-  { _id: false }
-);
-
 const imageAssetSchema = new mongoose.Schema(
   {
     key: { type: String, required: true },
@@ -32,7 +20,6 @@ const imageAssetSchema = new mongoose.Schema(
     contentType: { type: String, default: null },
     uploadedAt: { type: Date, default: Date.now },
     originalName: { type: String, default: null },
-    evaluation: { type: evaluationSchema, default: null },
   },
   { _id: true }
 );

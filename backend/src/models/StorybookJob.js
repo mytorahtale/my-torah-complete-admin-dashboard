@@ -15,16 +15,6 @@ const imageAssetSchema = new mongoose.Schema(
   { _id: true }
 );
 
-const rankingNoteSchema = new mongoose.Schema(
-  {
-    imageIndex: { type: Number, required: true, min: 1 },
-    score: { type: Number, default: null },
-    verdict: { type: String, default: '' },
-    notes: { type: String, default: '' },
-  },
-  { _id: false }
-);
-
 const storybookEventSchema = new mongoose.Schema(
   {
     type: { type: String, required: true },
@@ -62,7 +52,7 @@ const storybookPageSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['queued', 'generating', 'ranking', 'completed', 'failed'],
+      enum: ['queued', 'generating', 'completed', 'failed'],
       default: 'queued',
     },
     progress: {
@@ -101,18 +91,6 @@ const storybookPageSchema = new mongoose.Schema(
     selectedCandidateIndex: {
       type: Number,
       default: null,
-    },
-    rankingWinner: {
-      type: Number,
-      default: null,
-    },
-    rankingSummary: {
-      type: String,
-      default: '',
-    },
-    rankingNotes: {
-      type: [rankingNoteSchema],
-      default: [],
     },
     events: {
       type: [storybookEventSchema],
@@ -153,8 +131,6 @@ const pdfAssetSchema = new mongoose.Schema(
             quote: { type: String, default: '' },
             background: { type: imageAssetSchema, default: null },
             character: { type: imageAssetSchema, default: null },
-            rankingSummary: { type: String, default: '' },
-            rankingNotes: { type: [rankingNoteSchema], default: [] },
             updatedAt: { type: Date, default: Date.now },
           },
           { _id: false }

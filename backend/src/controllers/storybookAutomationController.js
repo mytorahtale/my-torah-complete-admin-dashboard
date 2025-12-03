@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { startStorybookAutomation, getStorybookJobById, listStorybookJobsForBook } = require('../services/storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
+const { applyCandidateSelection } = require('../services/storybookCandidateService');
 
 const isValidObjectId = (value) => {
   if (!value) return false;
@@ -125,6 +126,53 @@ exports.listJobs = async (req, res) => {
       success: false,
       message: 'Failed to list storybook jobs',
       error: error.message,
+    });
+  }
+};
+
+exports.applyCandidate = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { pageOrder, candidateIndex } = req.body || {};
+
+    if (!isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid job ID',
+      });
+    }
+
+    if (!pageOrder && pageOrder !== 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'pageOrder is required',
+      });
+    }
+
+    const numericCandidate = Number(candidateIndex);
+    if (!Number.isFinite(numericCandidate) || numericCandidate <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'candidateIndex must be a positive integer starting at 1',
+      });
+    }
+
+    const result = await applyCandidateSelection({
+      jobId,
+      pageToken: pageOrder,
+      candidateIndex: numericCandidate,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Candidate applied successfully; storybook PDF will be rebuilt.',
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error applying storybook candidate:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to apply storybook candidate',
     });
   }
 };

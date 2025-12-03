@@ -9,7 +9,6 @@ import {
   UploadCloud,
   Loader2,
   Maximize2,
-  RefreshCw,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -36,11 +35,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import ImageViewer from '@/components/ImageViewer';
 import { formatFileSize } from '@/utils/file';
-import EvaluationImageCard from '@/components/evaluation/EvaluationImageCard';
-import EvaluationSummary from '@/components/evaluation/EvaluationSummary';
-import { evaluateImageFile } from '@/utils/evaluation';
 
-// TODO: Deep analysis - Revisit the /users admin flow (http://localhost:3000/users) to restore stricter evaluation when the service is stable again.
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 const createEmptyForm = () => ({
   name: '',
@@ -50,117 +46,7 @@ const createEmptyForm = () => ({
   email: '',
   countryCode: '+1',
   phoneNumber: '',
-  images: [],
 });
-
-const summariseEvaluationItems = (items) => {
-  const evaluated = items.filter((item) => item.status === 'evaluated');
-  if (!evaluated.length) {
-    return null;
-  }
-
-  const acceptedCount = evaluated.filter((item) => item.evaluation?.acceptable).length;
-  const rejectedCount = evaluated.length - acceptedCount;
-  const totalConfidence = evaluated.reduce(
-    (sum, item) => sum + (item.evaluation?.confidencePercent || 0),
-    0
-  );
-  const averageConfidence = Math.round(totalConfidence / evaluated.length || 0);
-
-  let verdict = 'needs_more';
-  let summary =
-    'Some photos need review. Approve or override the ones you want to keep before continuing.';
-  if (acceptedCount === evaluated.length) {
-    verdict = 'accept';
-    summary = 'All evaluated photos meet the training guidelines.';
-  } else if (acceptedCount === 0) {
-    verdict = 'reject';
-    summary =
-      'None of the evaluated photos met the quality guidelines. Capture new reference images.';
-  }
-
-  return {
-    verdict,
-    acceptedCount,
-    rejectedCount,
-    confidencePercent: averageConfidence,
-    summary,
-  };
-};
-
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
-
-const buildEvaluationOutcome = (rawEvaluation, fileName) => {
-  const label = fileName || 'Uploaded image';
-
-  // Simplified evaluation handling - always accept images to avoid blocking user creation
-  // Check if we have a valid evaluation response
-  let evaluation = null;
-  if (rawEvaluation) {
-    if (rawEvaluation.evaluation) {
-      evaluation = rawEvaluation.evaluation;
-    } else if (rawEvaluation.images) {
-      evaluation = rawEvaluation;
-    } else if (rawEvaluation.data && rawEvaluation.data.evaluation) {
-      evaluation = rawEvaluation.data.evaluation;
-    }
-  }
-
-  // If we have a valid evaluation with images, use it
-  if (evaluation && Array.isArray(evaluation.images) && evaluation.images.length > 0) {
-    const imageResult = evaluation.images[0];
-    const overall = evaluation.overallAcceptance || {
-      verdict: 'accept',
-      acceptedCount: 1,
-      rejectedCount: 0,
-      confidencePercent: 70,
-      summary: 'Image evaluation completed.',
-    };
-    const isFallback = Boolean(imageResult?.fallback);
-    return {
-      imageResult: {
-        ...imageResult,
-        acceptable: true, // Always accept to avoid blocking
-        verdict: 'accept',
-      },
-      overall,
-      fallback: isFallback,
-      fallbackReason: isFallback ? 'Evaluation service unavailable' : null,
-    };
-  }
-
-  // Default fallback - accept all images to ensure smooth user creation
-  const summary = 'Image accepted for upload.';
-  const notes = 'Manual review recommended.';
-
-  return {
-    imageResult: {
-      name: label,
-      overallScorePercent: 100,
-      acceptable: true,
-      verdict: 'accept',
-      confidencePercent: 70,
-      criteria: {
-        clarity: { scorePercent: 100, verdict: 'yes', notes },
-        framing: { scorePercent: 100, verdict: 'yes', notes },
-        expression: { scorePercent: 100, verdict: 'yes', notes },
-        lighting: { scorePercent: 100, verdict: 'yes', notes },
-        safety: { scorePercent: 100, verdict: 'yes', notes },
-      },
-      recommendations: [],
-      fallback: true,
-    },
-    overall: {
-      verdict: 'accept',
-      acceptedCount: 1,
-      rejectedCount: 0,
-      confidencePercent: 70,
-      summary,
-    },
-    fallback: true,
-    fallbackReason: 'Auto-approved for smooth processing',
-  };
-};
 
 const buildUserPayload = (formValues) => {
   const payload = {
@@ -197,7 +83,7 @@ function Users() {
   const [viewerAsset, setViewerAsset] = useState(null);
   const [formImages, setFormImages] = useState([]);
   const [isSavingUser, setIsSavingUser] = useState(false);
-  const [pendingEvaluations, setPendingEvaluations] = useState({});
+
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(PAGE_SIZE_OPTIONS[0]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -208,7 +94,7 @@ function Users() {
     page: 1,
     totalPages: 0,
     total: 0,
-    limit: 10,
+    limit: PAGE_SIZE_OPTIONS[0],
     hasNextPage: false,
     hasPrevPage: false,
   });
@@ -299,27 +185,6 @@ function Users() {
       if (responsePagination.page && responsePagination.page !== page) {
         setPage(responsePagination.page);
       }
-
-      if (nextTotal <= fetchedUsers.length) {
-        setPendingEvaluations((prev) => {
-          if (!prev || Object.keys(prev).length === 0) return prev;
-          const validIds = new Set(fetchedUsers.map((item) => item._id));
-          const next = {};
-          Object.entries(prev).forEach(([userId, bucket]) => {
-            if (!bucket) return;
-            if (validIds.has(userId)) {
-              next[userId] = bucket;
-            } else {
-              bucket.items?.forEach((item) => {
-                if (item.preview?.startsWith('blob:')) {
-                  URL.revokeObjectURL(item.preview);
-                }
-              });
-            }
-          });
-          return next;
-        });
-      }
     } catch (error) {
       toast.error(`Failed to fetch users: ${error.message}`);
     } finally {
@@ -371,149 +236,11 @@ function Users() {
     limit !== PAGE_SIZE_OPTIONS[0];
   const effectivePageSize =
     pagination.limit && pagination.limit > 0 ? pagination.limit : limit || PAGE_SIZE_OPTIONS[0];
-  const pageStart =
-    pagination.total === 0 ? 0 : (currentPage - 1) * effectivePageSize + 1;
+  const pageStart = pagination.total === 0 ? 0 : (currentPage - 1) * effectivePageSize + 1;
   const pageEnd =
     pagination.total === 0 ? 0 : Math.min(currentPage * effectivePageSize, pagination.total);
   const canGoPrev = pagination.hasPrevPage && !loading;
   const canGoNext = pagination.hasNextPage && !loading;
-
-  const mutateFormImage = useCallback(
-    (id, updater) => {
-      setFormImages((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                ...(typeof updater === 'function' ? updater(item) : updater),
-              }
-            : item
-        )
-      );
-    },
-    [setFormImages]
-  );
-
-  const evaluateFormImage = useCallback(
-    async (imageEntry) => {
-      mutateFormImage(imageEntry.id, { status: 'evaluating', error: null, fallbackReason: null });
-      try {
-        const evaluation = await evaluateImageFile(imageEntry.file);
-        const { imageResult, overall, fallback, fallbackReason } = buildEvaluationOutcome(
-          evaluation,
-          imageEntry.file?.name
-        );
-        // Always include images to ensure smooth user creation
-        mutateFormImage(imageEntry.id, {
-          status: 'evaluated',
-          evaluation: imageResult,
-          overall,
-          include: true, // Auto-include all images
-          override: false,
-          error: null,
-          fallbackReason: fallback ? fallbackReason : null,
-        });
-        // Don't show toast for every image evaluation
-      } catch (error) {
-        const { imageResult, overall, fallbackReason } = buildEvaluationOutcome(
-          null,
-          imageEntry.file?.name
-        );
-        // Even on error, include the image
-        mutateFormImage(imageEntry.id, {
-          status: 'evaluated',
-          evaluation: imageResult,
-          overall,
-          include: true, // Auto-include even on evaluation error
-          override: false,
-          error: null,
-          fallbackReason,
-        });
-        // Silently handle evaluation errors
-      }
-    },
-    [mutateFormImage]
-  );
-
-  const mutatePendingImage = useCallback((userId, imageId, updater) => {
-    setPendingEvaluations((prev) => {
-      const bucket = prev[userId];
-      if (!bucket) return prev;
-      const items = bucket.items.map((item) =>
-        item.id === imageId
-          ? {
-              ...item,
-              ...(typeof updater === 'function' ? updater(item) : updater),
-            }
-          : item
-      );
-      return {
-        ...prev,
-        [userId]: {
-          ...bucket,
-          items,
-        },
-      };
-    });
-  }, []);
-
-  const evaluatePendingImage = useCallback(
-    async (userId, imageEntry) => {
-      mutatePendingImage(userId, imageEntry.id, {
-        status: 'evaluating',
-        error: null,
-        fallbackReason: null,
-      });
-      try {
-        const evaluation = await evaluateImageFile(imageEntry.file);
-        const { imageResult, overall, fallback, fallbackReason } = buildEvaluationOutcome(
-          evaluation,
-          imageEntry.file?.name
-        );
-        const acceptable = Boolean(imageResult.acceptable);
-        mutatePendingImage(userId, imageEntry.id, {
-          status: 'evaluated',
-          evaluation: imageResult,
-          overall,
-          include: acceptable,
-          override: acceptable ? false : imageEntry.override || false,
-          error: null,
-          fallbackReason: fallback ? fallbackReason : null,
-        });
-        if (fallback) {
-          const notice =
-            fallbackReason && fallbackReason.trim().length > 0
-              ? fallbackReason
-              : 'Vision evaluator unavailable.';
-          toast(
-            `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
-          );
-        }
-      } catch (error) {
-        const { imageResult, overall, fallbackReason } = buildEvaluationOutcome(
-          null,
-          imageEntry.file?.name
-        );
-        mutatePendingImage(userId, imageEntry.id, {
-          status: 'evaluated',
-          evaluation: imageResult,
-          overall,
-          include: Boolean(imageResult.acceptable),
-          override: false,
-          error: null,
-          fallbackReason,
-        });
-        const notice =
-          fallbackReason && fallbackReason.trim().length > 0
-            ? fallbackReason
-            : 'Vision evaluator unavailable.';
-        toast(
-          `Accepted ${imageEntry.file?.name || 'image'} without evaluation: ${notice}`
-        );
-      }
-    },
-    [mutatePendingImage]
-  );
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
@@ -524,220 +251,49 @@ function Users() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const formEvaluationOverall = useMemo(
-    () => summariseEvaluationItems(formImages),
-    [formImages]
-  );
+  const handleFormImageUpload = (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
 
-  const handleToggleFormInclude = useCallback(
-    (id, include) => {
-      mutateFormImage(id, (current) => ({
-        include,
-        override: include && !current.evaluation?.acceptable,
-      }));
-    },
-    [mutateFormImage]
-  );
+    const timestamp = Date.now();
+    const mapped = files.map((file, index) => ({
+      id: `${timestamp}-${index}-${file.name}`,
+      file,
+      preview: URL.createObjectURL(file),
+      status: 'pending',
+    }));
 
-  const handleRetryFormImage = useCallback(
-    (id) => {
-      const entry = formImages.find((item) => item.id === id);
-      if (entry) {
-        evaluateFormImage(entry);
-      }
-    },
-    [formImages, evaluateFormImage]
-  );
+    setFormImages((prev) => [...prev, ...mapped]);
+    event.target.value = '';
+  };
 
-  const addPendingEvaluationBatch = useCallback(
-    (userId, files) => {
-      if (!files.length) return;
-      const timestamp = Date.now();
-      const mapped = files.map((file, index) => ({
-        id: `${userId}-${timestamp}-${index}-${file.name}`,
-        file,
-        preview: URL.createObjectURL(file),
-        status: 'pending',
-        evaluation: null,
-        overall: null,
-        include: false,
-        override: false,
-        error: null,
-        fallbackReason: null,
-      }));
-
-      setPendingEvaluations((prev) => {
-        const existing = prev[userId]?.items || [];
-        return {
-          ...prev,
-          [userId]: {
-            items: [...existing, ...mapped],
-            uploading: false,
-          },
-        };
-      });
-
-      mapped.forEach((entry) => evaluatePendingImage(userId, entry));
-    },
-    [evaluatePendingImage]
-  );
-
-  const handleTogglePendingInclude = useCallback(
-    (userId, imageId, include) => {
-      mutatePendingImage(userId, imageId, (current) => ({
-        include,
-        override: include && !current.evaluation?.acceptable,
-      }));
-    },
-    [mutatePendingImage]
-  );
-
-  const handleRetryPendingImage = useCallback(
-    (userId, imageId) => {
-      const bucket = pendingEvaluations[userId];
-      const entry = bucket?.items.find((item) => item.id === imageId);
-      if (entry) {
-        evaluatePendingImage(userId, entry);
-      }
-    },
-    [pendingEvaluations, evaluatePendingImage]
-  );
-
-  const handleRemovePendingImage = useCallback((userId, imageId) => {
-    setPendingEvaluations((prev) => {
-      const bucket = prev[userId];
-      if (!bucket) return prev;
-      const target = bucket.items.find((item) => item.id === imageId);
+  const handleRemoveFormImage = (id) => {
+    setFormImages((prev) => {
+      const target = prev.find((item) => item.id === id);
       if (target?.preview?.startsWith('blob:')) {
         URL.revokeObjectURL(target.preview);
       }
-      const items = bucket.items.filter((item) => item.id !== imageId);
-      const next = { ...prev };
-      if (items.length) {
-        next[userId] = { ...bucket, items };
-      } else {
-        delete next[userId];
-      }
-      return next;
+      return prev.filter((item) => item.id !== id);
     });
-  }, []);
+  };
 
-  const handleClearPendingBatch = useCallback((userId) => {
-    setPendingEvaluations((prev) => {
-      const bucket = prev[userId];
-      if (!bucket) return prev;
-      bucket.items.forEach((item) => {
-        if (item.preview?.startsWith('blob:')) {
-          URL.revokeObjectURL(item.preview);
-        }
-      });
-      const next = { ...prev };
-      delete next[userId];
-      return next;
-    });
-  }, []);
-
-  const handleResetPendingUploadFailure = useCallback(
-    (userId, imageId) => {
-      mutatePendingImage(userId, imageId, {
-        status: 'evaluated',
-        error: null,
-      });
-    },
-    [mutatePendingImage]
-  );
-
-  const commitPendingUploads = useCallback(
-    async (userId) => {
-      const bucket = pendingEvaluations[userId];
-      if (!bucket || bucket.items.length === 0) {
-        toast.error('No evaluated images ready to upload.');
-        return;
-      }
-
-      const hasPending =
-        bucket.items.some((item) => item.status === 'evaluating' || item.status === 'pending');
-      if (hasPending) {
-        toast.error('Wait for evaluations to finish before uploading.');
-        return;
-      }
-
-      const selected = bucket.items.filter((item) => item.include);
-      if (!selected.length) {
-        toast.error('Select at least one image to upload.');
-        return;
-      }
-
-      setPendingEvaluations((prev) => ({
-        ...prev,
-        [userId]: {
-          ...(prev[userId] || {}),
-          uploading: true,
-        },
-      }));
-
-      const results = await Promise.all(
-        selected.map(async (item) => {
-          mutatePendingImage(userId, item.id, { status: 'uploading', error: null });
-          try {
-            await userAPI.uploadImage(userId, item.file, {
-              override: item.override,
-              evaluation: item.evaluation,
-            });
-            mutatePendingImage(userId, item.id, { status: 'uploaded' });
-            return { id: item.id, success: true };
-          } catch (error) {
-            const message = error?.message || 'Upload failed';
-            mutatePendingImage(userId, item.id, {
-              status: 'upload_failed',
-              error: message,
-            });
-            return { id: item.id, success: false, error: message };
-          }
-        })
-      );
-
-      const failed = results.filter((result) => !result.success);
-      if (failed.length) {
-        toast.error(`Failed to upload ${failed.length} image${failed.length > 1 ? 's' : ''}.`);
-        setPendingEvaluations((prev) => ({
-          ...prev,
-          [userId]: {
-            ...(prev[userId] || {}),
-            uploading: false,
-          },
-        }));
-        return;
-      }
-
-      toast.success(`Uploaded ${selected.length} image${selected.length > 1 ? 's' : ''}`);
-      setPendingEvaluations((prev) => {
-        const bucketLatest = prev[userId];
-        if (!bucketLatest) return prev;
-        bucketLatest.items.forEach((item) => {
-          if (item.status === 'uploaded' && item.preview?.startsWith('blob:')) {
-            URL.revokeObjectURL(item.preview);
-          }
-        });
-        const remaining = bucketLatest.items.filter((item) => item.status !== 'uploaded');
-        const next = { ...prev };
-        if (remaining.length) {
-          next[userId] = { items: remaining, uploading: false };
-        } else {
-          delete next[userId];
-        }
-        return next;
-      });
-      fetchUsers();
-    },
-    [pendingEvaluations, mutatePendingImage]
-  );
+  const resetForm = () => {
+    setFormData(createEmptyForm());
+    setEditingId(null);
+    setShowForm(false);
+    formImages.forEach((img) => img.preview && URL.revokeObjectURL(img.preview));
+    setFormImages([]);
+    if (viewerAsset?.shouldRevoke && viewerAsset?.src?.startsWith('blob:')) {
+      URL.revokeObjectURL(viewerAsset.src);
+    }
+    setViewerAsset(null);
+    setIsSavingUser(false);
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isSavingUser) return;
 
-    // Simplified validation - only check required fields
     if (!formData.name?.trim()) {
       toast.error('Please enter a name');
       return;
@@ -754,32 +310,22 @@ function Users() {
         return;
       }
 
-      // Create the user first
       const payload = buildUserPayload(formData);
       const response = await userAPI.create(payload);
       const newUserId = response.data._id;
 
-      // Handle image uploads if any (all images are auto-included now)
       const imagesToUpload = formImages.filter((item) => item.file);
-
       if (imagesToUpload.length > 0) {
         let successCount = 0;
         let failCount = 0;
 
-        // Upload images one by one for better error handling
         for (const item of imagesToUpload) {
           try {
-            mutateFormImage(item.id, { status: 'uploading', error: null });
-            await userAPI.uploadImage(newUserId, item.file, {
-              override: true, // Always override to ensure smooth upload
-              evaluation: item.evaluation,
-            });
-            mutateFormImage(item.id, { status: 'uploaded' });
-            successCount++;
+            await userAPI.uploadImage(newUserId, item.file);
+            successCount += 1;
           } catch (error) {
             console.warn(`Failed to upload image ${item.file?.name}:`, error);
-            failCount++;
-            // Continue with other uploads even if one fails
+            failCount += 1;
           }
         }
 
@@ -823,44 +369,41 @@ function Users() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this user?')) return;
-
     try {
       await userAPI.delete(id);
       toast.success('User deleted');
-      setPendingEvaluations((prev) => {
-        if (!prev[id]) return prev;
-        prev[id].items?.forEach((item) => {
-          if (item.preview?.startsWith('blob:')) {
-            URL.revokeObjectURL(item.preview);
-          }
-        });
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
       fetchUsers();
     } catch (error) {
       toast.error(`Failed to delete user: ${error.message}`);
     }
   };
 
-  const resetForm = () => {
-    setFormData(createEmptyForm());
-    setEditingId(null);
-    setShowForm(false);
-    formImages.forEach((img) => URL.revokeObjectURL(img.preview));
-    setFormImages([]);
-    if (viewerAsset?.shouldRevoke && viewerAsset?.src?.startsWith('blob:')) {
-      URL.revokeObjectURL(viewerAsset.src);
-    }
-    setViewerAsset(null);
-    setIsSavingUser(false);
-  };
-
-  const handleUploadImages = (userId, fileList) => {
+  const handleUploadImages = async (userId, fileList) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
-    addPendingEvaluationBatch(userId, files);
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const file of files) {
+      try {
+        await userAPI.uploadImage(userId, file);
+        successCount += 1;
+      } catch (error) {
+        console.warn(`Failed to upload image ${file?.name}:`, error);
+        failCount += 1;
+      }
+    }
+
+    if (successCount > 0) {
+      toast.success(
+        `Uploaded ${successCount} image${successCount > 1 ? 's' : ''} for this user`
+      );
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to upload ${failCount} image${failCount > 1 ? 's' : ''}`);
+    }
+    fetchUsers();
   };
 
   const handleDeleteImage = async (userId, assetId) => {
@@ -874,50 +417,9 @@ function Users() {
     }
   };
 
-  const handleFormImageUpload = (event) => {
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) return;
-
-    const timestamp = Date.now();
-    const mapped = files.map((file, index) => ({
-      id: `${timestamp}-${index}-${file.name}`,
-      file,
-      preview: URL.createObjectURL(file),
-      status: 'pending',
-      evaluation: null,
-      overall: null,
-      include: true, // Auto-include by default
-      override: false,
-      error: null,
-      fallbackReason: null,
-    }));
-
-    setFormImages((prev) => [...prev, ...mapped]);
-    event.target.value = '';
-
-    // Evaluate images in background (non-blocking)
-    mapped.forEach((entry) => {
-      evaluateFormImage(entry);
-    });
-  };
-
-  const handleRemoveFormImage = (id) => {
-    setFormImages((prev) => {
-      const target = prev.find((item) => item.id === id);
-      if (target?.status === 'uploading') {
-        return prev;
-      }
-      if (target) {
-        URL.revokeObjectURL(target.preview);
-      }
-      return prev.filter((item) => item.id !== id);
-    });
-  };
-
   if (loading) {
     return (
       <div className="space-y-6">
-        {/* Header skeleton */}
         <div className="flex items-end justify-between">
           <div className="space-y-2">
             <Skeleton className="h-8 w-48" />
@@ -926,7 +428,6 @@ function Users() {
           <Skeleton className="h-10 w-32" />
         </div>
 
-        {/* Users grid skeleton */}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <Card key={i}>
@@ -939,14 +440,12 @@ function Users() {
                   <Skeleton className="h-9 w-9 rounded-full" />
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Skeleton className="h-4 w-full" />
-                </div>
+              <CardContent className="space-y-4">
+                <Skeleton className="h-4 w-40" />
                 <div className="grid grid-cols-3 gap-2">
-                  <Skeleton className="aspect-square w-full" />
-                  <Skeleton className="aspect-square w-full" />
-                  <Skeleton className="aspect-square w-full" />
+                  {[1, 2, 3].map((j) => (
+                    <Skeleton key={j} className="h-20 w-full rounded-md" />
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -957,36 +456,35 @@ function Users() {
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-            User Management
-          </h2>
-          <p className="mt-1 text-sm text-foreground/60">
-            Maintain the personas that fuel your fine-tuned models.
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
+            <UsersIcon className="h-6 w-6 text-primary" />
+            Readers
+          </h1>
+          <p className="text-sm text-foreground/60">
+            Manage children profiles and their reference photos used for training and storybooks.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge className="hidden sm:inline-flex bg-foreground/10 text-foreground/70">
-            {stats.totalUsers} users
-          </Badge>
-          <Badge className="hidden sm:inline-flex bg-foreground/10 text-foreground/70">
-            {totalImages} training images
-          </Badge>
-          <Badge className="hidden sm:inline-flex bg-foreground/10 text-foreground/70">
-            Page {currentPage} / {totalPagesDisplay}
-          </Badge>
-          <Button onClick={() => setShowForm((prev) => !prev)} className="gap-2">
-            <UserPlus className="h-4 w-4" />
-            {showForm ? 'Close form' : 'Add user'}
-          </Button>
-        </div>
+        <Button
+          type="button"
+          onClick={() => {
+            setShowForm(true);
+            setEditingId(null);
+            setFormData(createEmptyForm());
+            setFormImages([]);
+          }}
+          className="gap-2"
+        >
+          <UserPlus className="h-4 w-4" />
+          Add user
+        </Button>
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto]">
+      <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
         <div className="space-y-2">
-          <Label htmlFor="user-search">Search users</Label>
+          <Label htmlFor="user-search">Search</Label>
           <Input
             id="user-search"
             type="search"
@@ -999,10 +497,10 @@ function Users() {
           <Label>Status</Label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger>
-              <SelectValue placeholder="Filter by status" />
+              <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="all">All</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
@@ -1012,10 +510,10 @@ function Users() {
           <Label>Gender</Label>
           <Select value={genderFilter} onValueChange={setGenderFilter}>
             <SelectTrigger>
-              <SelectValue placeholder="Filter by gender" />
+              <SelectValue placeholder="All genders" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All genders</SelectItem>
+              <SelectItem value="all">All</SelectItem>
               <SelectItem value="male">Male</SelectItem>
               <SelectItem value="female">Female</SelectItem>
               <SelectItem value="other">Other</SelectItem>
@@ -1029,9 +527,9 @@ function Users() {
               <SelectValue placeholder="Results per page" />
             </SelectTrigger>
             <SelectContent>
-              {PAGE_SIZE_OPTIONS.map((option) => (
-                <SelectItem key={option} value={String(option)}>
-                  {option} / page
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <SelectItem key={size} value={String(size)}>
+                  {size} / page
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1051,56 +549,84 @@ function Users() {
         </div>
       </div>
 
+      <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-3">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
+            Readers
+          </p>
+          <p className="text-2xl font-semibold text-foreground">{stats.totalUsers || 0}</p>
+          <p className="text-xs text-foreground/60">Total children profiles</p>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
+            Reference photos
+          </p>
+          <p className="text-2xl font-semibold text-foreground">{totalImages}</p>
+          <p className="text-xs text-foreground/60">Uploaded for training and storybooks</p>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
+            Page
+          </p>
+          <p className="text-2xl font-semibold text-foreground">
+            {currentPage} / {totalPagesDisplay}
+          </p>
+          <p className="text-xs text-foreground/60">
+            Showing {pageStart}-{pageEnd} of {pagination.total} users
+          </p>
+        </div>
+      </div>
+
       {showForm && (
-        <Card>
+        <Card className="border-border/60 bg-card/95">
           <CardHeader>
-            <CardTitle>{editingId ? 'Edit user' : 'Create new user'}</CardTitle>
-            <CardDescription>
-              Keep user details and reference photos organised before kicking off a training run.
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <UserCircle2 className="h-5 w-5 text-primary" />
+              {editingId ? 'Edit user' : 'Add new user'}
+            </CardTitle>
+            <CardDescription className="text-sm text-foreground/60">
+              Store the child’s details and optional reference photos. Images are compressed
+              automatically on upload.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="grid-responsive">
+            <form className="space-y-6" onSubmit={handleSubmit}>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Name *</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name</Label>
                   <Input
                     id="name"
                     name="name"
                     value={formData.name}
                     onChange={handleInputChange}
+                    placeholder="Child's name"
                     required
-                    placeholder="Jane Doe"
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="secondTitle">Second Title</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="secondTitle">Second title (optional)</Label>
                   <Textarea
                     id="secondTitle"
                     name="secondTitle"
-                    minRows={3}
+                    rows={2}
                     value={formData.secondTitle}
                     onChange={handleInputChange}
-                    placeholder="Enter additional information or title (use line breaks for spacing)"
+                    placeholder="Short dedication or description"
                   />
                 </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid gap-2">
+                <div className="space-y-2">
                   <Label htmlFor="age">Age</Label>
                   <Input
                     id="age"
-                    type="number"
                     name="age"
+                    type="number"
+                    min="0"
+                    max="150"
                     value={formData.age}
                     onChange={handleInputChange}
-                    min={1}
-                    max={150}
-                    placeholder="28"
                   />
                 </div>
-                <div className="grid gap-2">
+                <div className="space-y-2">
                   <Label>Gender</Label>
                   <Select
                     value={formData.gender}
@@ -1116,39 +642,38 @@ function Users() {
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid gap-2">
+                <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
-                    type="email"
                     name="email"
+                    type="email"
                     value={formData.email}
                     onChange={handleInputChange}
-                    placeholder="jane@example.com"
+                    placeholder="parent@example.com"
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="countryCode">Country code</Label>
-                  <Input
-                    id="countryCode"
-                    name="countryCode"
-                    value={formData.countryCode}
-                    onChange={handleInputChange}
-                    placeholder="+1"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="phoneNumber">Phone number</Label>
-                  <Input
-                    id="phoneNumber"
-                    name="phoneNumber"
-                    value={formData.phoneNumber}
-                    onChange={handleInputChange}
-                    placeholder="1234567890"
-                  />
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="countryCode">Country code</Label>
+                    <Input
+                      id="countryCode"
+                      name="countryCode"
+                      value={formData.countryCode}
+                      onChange={handleInputChange}
+                      placeholder="+1"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phoneNumber">Phone number</Label>
+                    <Input
+                      id="phoneNumber"
+                      name="phoneNumber"
+                      value={formData.phoneNumber}
+                      onChange={handleInputChange}
+                      placeholder="5551234567"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1157,8 +682,8 @@ function Users() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
                       <Label>Upload images (optional)</Label>
-                      <p className="text-xs text-foreground/45">
-                        Uploaded photos are automatically evaluated before they can be saved.
+                      <p className="text-xs text-foreground/50">
+                        Add 10–15 clear photos of the child. Images are compressed automatically.
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1183,19 +708,11 @@ function Users() {
 
                   {formImages.length > 0 ? (
                     <div className="space-y-4">
-                      {formEvaluationOverall ? (
-                        <EvaluationSummary overall={formEvaluationOverall} />
-                      ) : (
-                        <p className="text-xs text-foreground/50">
-                          Evaluations are running. Wait for the verdict before saving the user.
-                        </p>
-                      )}
                       <p className="text-xs text-foreground/50">
-                        Selected for upload:{' '}
-                        {formImages.filter((item) => item.include).length} of {formImages.length}
+                        Selected for upload: {formImages.length} image
+                        {formImages.length > 1 ? 's' : ''}.
                       </p>
-
-                      <div className="space-y-4">
+                      <div className="space-y-3">
                         {formImages.map((item) => (
                           <div
                             key={item.id}
@@ -1225,8 +742,12 @@ function Users() {
                               <div className="flex-1 space-y-3">
                                 <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                                   <div>
-                                    <p className="text-sm font-semibold text-foreground">{item.file.name}</p>
-                                    <p className="text-xs text-foreground/50">{formatFileSize(item.file.size)}</p>
+                                    <p className="text-sm font-semibold text-foreground">
+                                      {item.file.name}
+                                    </p>
+                                    <p className="text-xs text-foreground/50">
+                                      {formatFileSize(item.file.size)}
+                                    </p>
                                   </div>
                                   <div className="flex gap-2">
                                     <Button
@@ -1235,87 +756,18 @@ function Users() {
                                       size="sm"
                                       className="text-xs text-red-300 hover:text-red-200"
                                       onClick={() => handleRemoveFormImage(item.id)}
-                                      disabled={item.status === 'uploading'}
                                     >
                                       Remove
                                     </Button>
                                   </div>
                                 </div>
-
-                                {item.status === 'evaluating' || item.status === 'pending' ? (
-                                  <div className="flex items-center gap-2 text-xs text-foreground/60">
-                                    <Loader2 className="h-4 w-4 animate-spin text-accent" />
-                                    Evaluating photo quality…
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'evaluation_failed' ? (
-                                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-amber-400/60 bg-amber-400/10 p-3 text-xs text-amber-200">
-                                    <p>Evaluation failed: {item.error}</p>
-                                    <div className="flex gap-2">
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="gap-2"
-                                        onClick={() => handleRetryFormImage(item.id)}
-                                      >
-                                        <RefreshCw className="h-4 w-4" />
-                                        Retry evaluation
-                                      </Button>
-                                    </div>
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'evaluated' ? (
-                                  <EvaluationImageCard
-                                    evaluation={item.evaluation}
-                                    summary={item.overall?.summary}
-                                  >
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                      <label className="flex items-center gap-2 text-xs text-foreground/70">
-                                        <input
-                                          type="checkbox"
-                                          className="h-3.5 w-3.5 rounded border-border/60 accent-accent"
-                                          checked={item.include}
-                                          onChange={(event) =>
-                                            handleToggleFormInclude(item.id, event.target.checked)
-                                          }
-                                        />
-                                        Include in upload
-                                      </label>
-                                      <div className="flex items-center gap-2">
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          className="text-xs text-foreground/60 hover:text-foreground"
-                                          onClick={() => handleRetryFormImage(item.id)}
-                                        >
-                                          Re-run evaluation
-                                        </Button>
-                                      </div>
-                                    </div>
-                                    {item.include && !item.evaluation?.acceptable ? (
-                                      <p className="text-xs text-amber-300">
-                                        Override enabled: this image will be included despite the rejection verdict.
-                                      </p>
-                                    ) : null}
-                                    {item.fallbackReason ? (
-                                      <p className="text-xs text-foreground/55">
-                                        Accepted without evaluator: {item.fallbackReason}
-                                      </p>
-                                    ) : null}
-                                  </EvaluationImageCard>
-                                ) : null}
                               </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
-                  ) : (
-                    <p className="text-xs text-foreground/50">No images uploaded yet.</p>
-                  )}
+                  ) : null}
                 </div>
               )}
 
@@ -1350,18 +802,11 @@ function Users() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {users.map((user) => {
-          const pendingBucket = pendingEvaluations[user._id];
-          const pendingItems = pendingBucket?.items || [];
-          const pendingSummary = summariseEvaluationItems(pendingItems);
-          const pendingSelected = pendingItems.filter((item) => item.include).length;
-          const pendingHasActiveEvaluation = pendingItems.some(
-            (item) => item.status === 'evaluating' || item.status === 'pending'
-          );
-          const disableUploadActions = Boolean(pendingBucket?.uploading);
           const displayGender = user.gender || '—';
           const displayAge = typeof user.age === 'number' ? user.age : '—';
           const displayEmail = user.email || '—';
-          const displayPhone = [user.countryCode, user.phoneNumber].filter(Boolean).join(' ').trim() || '—';
+          const displayPhone =
+            [user.countryCode, user.phoneNumber].filter(Boolean).join(' ').trim() || '—';
 
           return (
             <Card key={user._id} className="flex flex-col justify-between">
@@ -1369,7 +814,9 @@ function Users() {
                 <div className="space-y-1">
                   <CardTitle className="text-lg">{user.name}</CardTitle>
                   {user.secondTitle && (
-                    <p className="text-sm text-foreground/70 whitespace-pre-wrap">{user.secondTitle}</p>
+                    <p className="whitespace-pre-wrap text-sm text-foreground/70">
+                      {user.secondTitle}
+                    </p>
                   )}
                   <CardDescription className="flex items-center gap-2 text-xs uppercase text-foreground/40">
                     <UsersIcon className="h-3.5 w-3.5" />
@@ -1399,9 +846,7 @@ function Users() {
                       <div className="flex items-center gap-2">
                         <label
                           htmlFor={`upload-${user._id}`}
-                          className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-xs font-semibold transition ${
-                            disableUploadActions ? 'bg-muted/70 text-foreground/40' : 'bg-card text-foreground/70 hover:bg-card/80'
-                          }`}
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border/60 bg-card px-3 py-2 text-xs font-semibold text-foreground/70 hover:bg-card/80"
                         >
                           <UploadCloud className="h-4 w-4" />
                           Upload
@@ -1416,7 +861,6 @@ function Users() {
                             handleUploadImages(user._id, event.target.files);
                             event.target.value = '';
                           }}
-                          disabled={disableUploadActions}
                         />
                       </div>
                     </div>
@@ -1488,210 +932,6 @@ function Users() {
                       <p className="text-xs text-foreground/50">No images uploaded yet.</p>
                     )}
                   </div>
-
-                  {pendingItems.length ? (
-                    <div className="space-y-4 rounded-xl border border-border/60 bg-card/60 p-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-foreground/80">Pending evaluations</p>
-                          <p className="text-xs text-foreground/50">
-                            Approve the photos you want to add to this user.
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="gap-2"
-                            disabled={
-                              disableUploadActions || pendingSelected === 0 || pendingHasActiveEvaluation
-                            }
-                            onClick={() => commitPendingUploads(user._id)}
-                          >
-                            {disableUploadActions ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : null}
-                            Upload selected
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-foreground/60 hover:text-foreground"
-                            disabled={disableUploadActions}
-                            onClick={() => handleClearPendingBatch(user._id)}
-                          >
-                            Clear
-                          </Button>
-                        </div>
-                      </div>
-
-                      {pendingBucket?.uploading ? (
-                        <div className="flex items-center gap-2 text-xs text-foreground/60">
-                          <Loader2 className="h-4 w-4 animate-spin text-accent" />
-                          Uploading approved images…
-                        </div>
-                      ) : null}
-
-                      {pendingSummary ? (
-                        <EvaluationSummary overall={pendingSummary} />
-                      ) : (
-                        <p className="text-xs text-foreground/50">
-                          Evaluations are running. Photos must be reviewed before they can be added.
-                        </p>
-                      )}
-
-                      <p className="text-xs text-foreground/50">
-                        Selected for upload: {pendingSelected} of {pendingItems.length}
-                      </p>
-
-                      <div className="space-y-4">
-                        {pendingItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className="space-y-3 rounded-xl border border-border/50 bg-background/80 p-4"
-                          >
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                              <button
-                                type="button"
-                                className="group relative h-32 w-full overflow-hidden rounded-lg border border-border/40 bg-card sm:w-36"
-                                onClick={() =>
-                                  setViewerAsset({
-                                    src: item.preview,
-                                    title: item.file.name,
-                                    sizeLabel: formatFileSize(item.file.size),
-                                    shouldRevoke: true,
-                                  })
-                                }
-                              >
-                                <img
-                                  src={item.preview}
-                                  alt={item.file.name}
-                                  className="h-full w-full object-cover transition group-hover:scale-[1.03]"
-                                />
-                                <span className="absolute inset-0 bg-black/20 opacity-0 transition group-hover:opacity-100" />
-                                <Maximize2 className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 transition group-hover:opacity-100" />
-                              </button>
-                              <div className="flex-1 space-y-3">
-                                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                                  <div>
-                                    <p className="text-sm font-semibold text-foreground">{item.file.name}</p>
-                                    <p className="text-xs text-foreground/50">{formatFileSize(item.file.size)}</p>
-                                  </div>
-                                  <div className="flex flex-wrap gap-2">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="text-xs text-red-300 hover:text-red-200"
-                                      onClick={() => handleRemovePendingImage(user._id, item.id)}
-                                      disabled={disableUploadActions || item.status === 'uploading'}
-                                    >
-                                      Remove
-                                    </Button>
-                                  </div>
-                                </div>
-
-                                {item.status === 'pending' || item.status === 'evaluating' ? (
-                                  <div className="flex items-center gap-2 text-xs text-foreground/60">
-                                    <Loader2 className="h-4 w-4 animate-spin text-accent" />
-                                    Evaluating photo quality…
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'evaluation_failed' ? (
-                                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-amber-400/60 bg-amber-400/10 p-3 text-xs text-amber-200">
-                                    <p>Evaluation failed: {item.error}</p>
-                                    <div className="flex gap-2">
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="gap-2"
-                                        onClick={() => handleRetryPendingImage(user._id, item.id)}
-                                      >
-                                        <RefreshCw className="h-4 w-4" />
-                                        Retry evaluation
-                                      </Button>
-                                    </div>
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'upload_failed' ? (
-                                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-red-400/60 bg-red-500/10 p-3 text-xs text-red-200">
-                                    <p>Upload failed: {item.error || 'Unable to store image.'}</p>
-                                    <div className="flex gap-2">
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="gap-2"
-                                        onClick={() => handleResetPendingUploadFailure(user._id, item.id)}
-                                      >
-                                        Try again
-                                      </Button>
-                                    </div>
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'uploading' ? (
-                                  <div className="flex items-center gap-2 text-xs text-foreground/60">
-                                    <Loader2 className="h-4 w-4 animate-spin text-accent" />
-                                    Uploading…
-                                  </div>
-                                ) : null}
-
-                                {item.status === 'evaluated' ? (
-                                  <EvaluationImageCard
-                                    evaluation={item.evaluation}
-                                    summary={item.overall?.summary}
-                                  >
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                      <label className="flex items-center gap-2 text-xs text-foreground/70">
-                                        <input
-                                          type="checkbox"
-                                          className="h-3.5 w-3.5 rounded border-border/60 accent-accent"
-                                          checked={item.include}
-                                          onChange={(event) =>
-                                            handleTogglePendingInclude(
-                                              user._id,
-                                              item.id,
-                                              event.target.checked
-                                            )
-                                          }
-                                        />
-                                        Include in upload
-                                      </label>
-                                      <div className="flex items-center gap-2">
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          className="text-xs text-foreground/60 hover:text-foreground"
-                                          onClick={() => handleRetryPendingImage(user._id, item.id)}
-                                          disabled={disableUploadActions}
-                                        >
-                                          Re-run evaluation
-                                        </Button>
-                                      </div>
-                                    </div>
-                                    {item.include && !item.evaluation?.acceptable ? (
-                                      <p className="text-xs text-amber-300">
-                                        Override enabled: this image will be uploaded despite the rejection verdict.
-                                      </p>
-                                    ) : null}
-                                    {item.fallbackReason ? (
-                                      <p className="text-xs text-foreground/55">
-                                        Accepted without evaluator: {item.fallbackReason}
-                                      </p>
-                                    ) : null}
-                                  </EvaluationImageCard>
-                                ) : null}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -1775,7 +1015,15 @@ function Users() {
                 Clear filters
               </Button>
             ) : (
-              <Button onClick={() => setShowForm(true)} className="mt-3">
+              <Button
+                onClick={() => {
+                  setShowForm(true);
+                  setEditingId(null);
+                  setFormData(createEmptyForm());
+                  setFormImages([]);
+                }}
+                className="mt-3"
+              >
                 <UserPlus className="mr-2 h-4 w-4" />
                 Add user
               </Button>
@@ -1783,6 +1031,7 @@ function Users() {
           </CardContent>
         </Card>
       )}
+
       <ImageViewer open={Boolean(viewerAsset)} image={viewerAsset} onClose={handleViewerClose} />
     </div>
   );

@@ -3,6 +3,12 @@ const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { randomUUID } = require('crypto');
 const path = require('path');
+const {
+  compressImageBuffer,
+  isImageContentType,
+  isImageKey,
+  resolveContentType,
+} = require('../utils/imageCompression');
 
 const requiredEnv = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
 requiredEnv.forEach((key) => {
@@ -41,13 +47,37 @@ const getPublicUrl = (key) => {
 };
 
 async function uploadBufferToS3(buffer, key, contentType, options = {}) {
+  let uploadBuffer = buffer;
+  let uploadContentType = contentType || 'application/octet-stream';
+
+  const shouldCompress =
+    options.compressImage !== false && (isImageContentType(uploadContentType) || isImageKey(key));
+
+  if (shouldCompress) {
+    try {
+      const result = await compressImageBuffer(uploadBuffer, {
+        mimeType: uploadContentType,
+        quality: options.imageQuality,
+        key,
+      });
+
+      if (!result.skipped && result.buffer) {
+        uploadBuffer = result.buffer;
+        uploadContentType = resolveContentType(result.format, uploadContentType);
+      }
+    } catch (error) {
+      console.warn(`⚠️  Image compression failed for ${key || 'buffer'}: ${error.message}`);
+      throw error;
+    }
+  }
+
   const uploader = new Upload({
     client: s3Client,
     params: {
       Bucket: BUCKET,
       Key: key,
-      Body: buffer,
-      ContentType: contentType || 'application/octet-stream',
+      Body: uploadBuffer,
+      ContentType: uploadContentType,
       ACL: options.acl || 'public-read',
     },
   });
@@ -57,6 +87,8 @@ async function uploadBufferToS3(buffer, key, contentType, options = {}) {
   return {
     key,
     url: getPublicUrl(key),
+    bytes: uploadBuffer ? uploadBuffer.length : 0,
+    contentType: uploadContentType,
   };
 }
 

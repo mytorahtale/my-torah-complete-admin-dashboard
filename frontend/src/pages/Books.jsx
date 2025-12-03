@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Search,
 } from 'lucide-react';
 import { bookAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -43,12 +44,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import ImageViewer from '@/components/ImageViewer';
 import { formatFileSize } from '@/utils/file';
 
-const GENDER_OPTIONS = [
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-  { value: 'both', label: 'Both' },
-];
-
 const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
   { value: 'inactive', label: 'Inactive' },
@@ -57,7 +52,6 @@ const STATUS_OPTIONS = [
 const BOOK_PAGE_SIZES = [10, 20, 50];
 
 const PAGE_ALIGNMENT_OPTIONS = [
-  { value: 'auto', label: 'Alternate automatically' },
   { value: 'left', label: 'Character on left' },
   { value: 'right', label: 'Character on right' },
 ];
@@ -81,7 +75,7 @@ const createEmptyPage = () => ({
   previewIsObject: false,
   existingImage: null,
   removeImage: false,
-  characterPosition: 'auto',
+  characterPosition: 'left',
   cover: defaultCoverConfig(),
   qr: {
     existing: null,
@@ -95,7 +89,6 @@ const createEmptyPage = () => ({
 const createEmptyBookForm = () => ({
   name: '',
   description: '',
-  gender: 'both',
   status: 'active',
   cover: {
     existing: null,
@@ -181,7 +174,6 @@ function Books() {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [genderFilter, setGenderFilter] = useState('all');
   const [pagination, setPagination] = useState({
     page: 1,
     totalPages: 0,
@@ -219,7 +211,7 @@ function Books() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, statusFilter, genderFilter, limit]);
+  }, [debouncedSearch, statusFilter, limit]);
 
   const fetchBooks = useCallback(
     async ({ withSpinner = true } = {}) => {
@@ -240,10 +232,6 @@ function Books() {
         if (statusFilter !== 'all') {
           params.status = statusFilter;
         }
-        if (genderFilter !== 'all') {
-          params.gender = genderFilter;
-        }
-
         const response = await bookAPI.getAll({ ...params, minimal: true });
         const fetchedBooks = Array.isArray(response?.data)
           ? response.data
@@ -320,7 +308,7 @@ function Books() {
         setIsFetchingBooks(false);
       }
     },
-    [page, limit, debouncedSearch, statusFilter, genderFilter]
+    [page, limit, debouncedSearch, statusFilter]
   );
 
   const loadDuplicateOptions = useCallback(async () => {
@@ -403,7 +391,6 @@ function Books() {
   const hasActiveFilters =
     Boolean(searchTerm) ||
     statusFilter !== 'all' ||
-    genderFilter !== 'all' ||
     limit !== BOOK_PAGE_SIZES[0];
   const canGoPrev = pagination.hasPrevPage && !isFetchingBooks;
   const canGoNext = pagination.hasNextPage && !isFetchingBooks;
@@ -411,7 +398,6 @@ function Books() {
   const handleResetFilters = useCallback(() => {
     setSearchTerm('');
     setStatusFilter('all');
-    setGenderFilter('all');
     setLimit(BOOK_PAGE_SIZES[0]);
     setPage(1);
   }, []);
@@ -524,7 +510,6 @@ function Books() {
     setFormState({
       name: book.name || '',
       description: book.description || '',
-      gender: book.gender || 'both',
       status: book.status || 'active',
       cover: {
         existing: book.coverImage || null,
@@ -560,7 +545,7 @@ function Books() {
                 previewIsObject: false,
                 existingImage: page.backgroundImage || page.characterImage || null,
                 removeImage: false,
-                characterPosition: page.characterPosition || 'auto',
+                characterPosition: page.characterPosition || 'left',
                 cover: {
                   headline: coverConfig?.headline || '',
                   footer: coverConfig?.footer || '',
@@ -1336,7 +1321,7 @@ const handleRemovePageImage = (index) => {
         hasNewImage: Boolean(page.file),
         removeImage: Boolean(page.removeImage) && !page.file,
         pageType: page.pageType,
-        characterPosition: page.characterPosition || 'auto',
+        characterPosition: page.characterPosition || 'left',
         cover: coverConfig,
         hasNewQrImage: page.pageType === 'cover' && Boolean(page.qr?.file),
         removeQrImage:
@@ -1363,7 +1348,6 @@ const handleRemovePageImage = (index) => {
     } else {
       formData.append('description', '');
     }
-    formData.append('gender', formState.gender);
     formData.append('status', formState.status);
 
     const coverAction =
@@ -1703,16 +1687,20 @@ const handleRemovePageImage = (index) => {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto]">
+      <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-[minmax(0,2.4fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_auto]">
         <div className="space-y-2">
           <Label htmlFor="book-search">Search books</Label>
-          <Input
-            id="book-search"
-            type="search"
-            placeholder="Search by name or description"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-          />
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
+            <Input
+              id="book-search"
+              type="search"
+              placeholder="Search by title or description"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
         <div className="space-y-2">
           <Label>Status</Label>
@@ -1724,20 +1712,6 @@ const handleRemovePageImage = (index) => {
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="inactive">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Gender focus</Label>
-          <Select value={genderFilter} onValueChange={setGenderFilter}>
-            <SelectTrigger>
-              <SelectValue placeholder="Filter by gender focus" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All genders</SelectItem>
-              <SelectItem value="male">Male</SelectItem>
-              <SelectItem value="female">Female</SelectItem>
-              <SelectItem value="both">Both</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1802,26 +1776,6 @@ const handleRemovePageImage = (index) => {
                     placeholder="The Galactic Explorer"
                     required
                   />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Gender focus</Label>
-                  <Select
-                    value={formState.gender}
-                    onValueChange={(value) =>
-                      setFormState((prev) => ({ ...prev, gender: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {GENDER_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
 
@@ -1991,7 +1945,7 @@ const handleRemovePageImage = (index) => {
                       <div className="space-y-2">
                         <Label>Character placement</Label>
                         <Select
-                          value={page.characterPosition || 'auto'}
+                          value={page.characterPosition || 'left'}
                           onValueChange={(value) => handlePageCharacterPositionChange(index, value)}
                         >
                           <SelectTrigger>
@@ -2005,9 +1959,6 @@ const handleRemovePageImage = (index) => {
                             ))}
                           </SelectContent>
                         </Select>
-                        <p className="text-xs text-foreground/50">
-                          "Auto" keeps the alternating layout. Override to force the artwork left or right.
-                        </p>
                       </div>
 
                       <div className="space-y-2">
@@ -2613,9 +2564,6 @@ const handleRemovePageImage = (index) => {
               <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/50">
                 <BookOpen className="h-3.5 w-3.5" />
                 <span>{pageCount} pages</span>
-                <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-foreground/55">
-                  {book.gender}
-                </span>
               </div>
             </CardHeader>
 

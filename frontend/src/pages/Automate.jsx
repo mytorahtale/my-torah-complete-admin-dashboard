@@ -36,9 +36,6 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import EvaluationImageCard from '@/components/evaluation/EvaluationImageCard';
-import EvaluationSummary from '@/components/evaluation/EvaluationSummary';
-import { evaluateImageFile } from '@/utils/evaluation';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
@@ -52,40 +49,6 @@ const createEmptyForm = () => ({
   countryCode: '+1',
   phoneNumber: '',
 });
-
-const summariseEvaluationItems = (items) => {
-  const evaluated = items.filter((item) => item.status === 'evaluated');
-  if (!evaluated.length) return null;
-
-  const accepted = evaluated.filter((item) => item.evaluation?.acceptable).length;
-  const rejected = evaluated.length - accepted;
-  const totalConfidence = evaluated.reduce(
-    (sum, item) => sum + (item.evaluation?.confidencePercent || 0),
-    0
-  );
-  const averageConfidence = Math.round(totalConfidence / evaluated.length || 0);
-
-  let verdict = 'needs_more';
-  let summary =
-    'Some photos need review. Approve or override the ones you want to keep before continuing.';
-
-  if (accepted === evaluated.length) {
-    verdict = 'accept';
-    summary = 'All evaluated photos meet the training guidelines.';
-  } else if (accepted === 0) {
-    verdict = 'reject';
-    summary =
-      'None of the evaluated photos met the quality guidelines. Capture new reference images.';
-  }
-
-  return {
-    verdict,
-    acceptedCount: accepted,
-    rejectedCount: rejected,
-    confidencePercent: averageConfidence,
-    summary,
-  };
-};
 
 const RUN_STATUS_META = {
   creating_user: { label: 'Creating user', icon: UsersIcon, badge: 'outline' },
@@ -172,11 +135,6 @@ function Automate() {
   const reconnectTimeoutRef = useRef(null);
   const runRefreshTimeoutRef = useRef(null);
   const hasInitialisedRef = useRef(false);
-
-  const formEvaluationOverall = useMemo(
-    () => summariseEvaluationItems(formImages),
-    [formImages]
-  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -383,53 +341,6 @@ function Automate() {
     };
   }, [connectEventStream, formImages]);
 
-  const mutateFormImage = useCallback(
-    (id, updater) => {
-      setFormImages((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                ...(typeof updater === 'function' ? updater(item) : updater),
-              }
-            : item
-        )
-      );
-    },
-    [setFormImages]
-  );
-
-  const evaluateFormImage = useCallback(
-    async (imageEntry) => {
-      mutateFormImage(imageEntry.id, { status: 'evaluating', error: null });
-      try {
-        const evaluation = await evaluateImageFile(imageEntry.file);
-        const imageResult = Array.isArray(evaluation?.images) ? evaluation.images[0] : null;
-        if (!imageResult) {
-          throw new Error('Evaluator returned no image analysis');
-        }
-        const overall = evaluation.overallAcceptance || null;
-        const acceptable = Boolean(imageResult.acceptable);
-        mutateFormImage(imageEntry.id, {
-          status: 'evaluated',
-          evaluation: imageResult,
-          overall,
-          include: acceptable,
-          override: acceptable ? false : imageEntry.override || false,
-        });
-      } catch (error) {
-        const message = error?.message || 'Evaluation failed';
-        mutateFormImage(imageEntry.id, {
-          status: 'evaluation_failed',
-          error: message,
-          include: false,
-        });
-        toast.error(`Evaluation failed for ${imageEntry.file?.name || 'image'}: ${message}`);
-      }
-    },
-    [mutateFormImage]
-  );
-
   const handleFormImageUpload = async (event) => {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
@@ -441,19 +352,10 @@ function Automate() {
         file,
         preview: URL.createObjectURL(file),
         status: 'pending',
-        include: true,
-        override: false,
-        evaluation: null,
-        overall: null,
-        error: null,
       };
     });
 
     setFormImages((prev) => [...prev, ...nextItems]);
-
-    nextItems.forEach((item) => {
-      evaluateFormImage(item);
-    });
   };
 
   const handleRemoveFormImage = (id) => {
@@ -465,19 +367,6 @@ function Automate() {
       }
       return next;
     });
-  };
-
-  const handleRetryFormImage = (id) => {
-    const target = formImages.find((item) => item.id === id);
-    if (!target) return;
-    evaluateFormImage(target);
-  };
-
-  const handleToggleFormInclude = (id, include) => {
-    mutateFormImage(id, (current) => ({
-      include,
-      override: include && !current.evaluation?.acceptable,
-    }));
   };
 
   const resetForm = () => {
@@ -509,17 +398,9 @@ function Automate() {
       return;
     }
 
-    const hasPendingEvaluation = formImages.some(
-      (item) => item.status === 'evaluating' || item.status === 'pending'
-    );
-    if (hasPendingEvaluation) {
-      toast.error('Wait for image evaluations to finish.');
-      return;
-    }
-
-    const approvedImages = formImages.filter((item) => item.include && item.file);
-    if (approvedImages.length === 0) {
-      toast.error('Add at least one approved reference photo.');
+    const imagesToUpload = formImages.filter((item) => item.file);
+    if (imagesToUpload.length === 0) {
+      toast.error('Add at least one reference photo.');
       return;
     }
 
@@ -535,13 +416,9 @@ function Automate() {
       payload.append('countryCode', formData.countryCode);
       payload.append('phoneNumber', formData.phoneNumber);
 
-      const overrides = [];
-      approvedImages.forEach((item) => {
+      imagesToUpload.forEach((item) => {
         payload.append('images', item.file, item.file.name);
-        overrides.push(Boolean(item.override));
       });
-
-      payload.append('overrides', JSON.stringify(overrides));
 
       await automationAPI.start(payload);
       scheduleRunRefresh();
@@ -833,8 +710,7 @@ function Automate() {
                   />
                 </div>
                 <p className="text-xs text-foreground/50">
-                  Uploaded photos are evaluated locally before sending them to the automation
-                  service.
+                  Uploaded photos are compressed and sent directly to the automation service.
                 </p>
               </div>
             </div>
@@ -842,13 +718,10 @@ function Automate() {
             <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
               {formImages.length > 0 ? (
                 <>
-                  {formEvaluationOverall ? (
-                    <EvaluationSummary overall={formEvaluationOverall} />
-                  ) : (
-                    <p className="text-xs text-foreground/60">
-                      Evaluations are running. Wait for the verdict before starting automation.
-                    </p>
-                  )}
+                  <p className="text-xs text-foreground/60">
+                    Selected {formImages.length} image
+                    {formImages.length > 1 ? 's' : ''} for this automation run.
+                  </p>
                   <div className="grid gap-4 lg:grid-cols-2">
                     {formImages.map((item) => (
                       <div
@@ -856,19 +729,32 @@ function Automate() {
                         className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="relative h-20 w-20 overflow-hidden rounded-lg border border-border/50 bg-background/60">
+                          <button
+                            type="button"
+                            className="group relative h-20 w-20 overflow-hidden rounded-lg border border-border/50 bg-background/60"
+                            onClick={() =>
+                              setViewerAsset({
+                                src: item.preview,
+                                title: item.file?.name || 'Uploaded image',
+                                sizeLabel: formatFileSize(item.file?.size || 0),
+                                shouldRevoke: false,
+                              })
+                            }
+                          >
                             {item.preview ? (
                               <img
                                 src={item.preview}
                                 alt={item.file?.name || 'Preview'}
-                                className="h-full w-full object-cover"
+                                className="h-full w-full object-cover transition group-hover:scale-[1.03]"
                               />
                             ) : (
                               <div className="flex h-full w-full items-center justify-center text-foreground/50">
                                 <ImageIcon className="h-6 w-6" />
                               </div>
                             )}
-                          </div>
+                            <span className="absolute inset-0 bg-black/20 opacity-0 transition group-hover:opacity-100" />
+                            <Maximize2 className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 transition group-hover:opacity-100" />
+                          </button>
                           <div className="flex-1 space-y-2">
                             <p className="text-xs font-semibold text-foreground/70">
                               {item.file?.name || 'Uploaded image'}
@@ -876,7 +762,7 @@ function Automate() {
                             <div className="flex items-center gap-2 text-[11px] text-foreground/50">
                               <span>{item.file?.type || 'image/*'}</span>
                               <span aria-hidden="true">•</span>
-                              <span>{Math.round((item.file?.size || 0) / 1024)} KB</span>
+                              <span>{formatFileSize(item.file?.size || 0)}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <Button
@@ -885,62 +771,12 @@ function Automate() {
                                 size="sm"
                                 className="text-xs text-foreground/50 hover:text-foreground"
                                 onClick={() => handleRemoveFormImage(item.id)}
-                                disabled={item.status === 'uploading'}
                               >
                                 Remove
                               </Button>
-                              {item.status === 'evaluation_failed' ? (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-xs text-foreground/60 hover:text-foreground"
-                                  onClick={() => handleRetryFormImage(item.id)}
-                                >
-                                  <RefreshCw className="mr-2 h-3 w-3" />
-                                  Retry evaluation
-                                </Button>
-                              ) : null}
                             </div>
                           </div>
                         </div>
-
-                        {item.status === 'evaluating' || item.status === 'pending' ? (
-                          <div className="flex items-center gap-2 text-xs text-foreground/60">
-                            <Loader2 className="h-4 w-4 animate-spin text-foreground/70" />
-                            Evaluating photo quality…
-                          </div>
-                        ) : null}
-
-                        {item.status === 'evaluation_failed' ? (
-                          <div className="rounded-lg border border-dashed border-foreground/20 bg-foreground/10 p-3 text-xs text-foreground/70">
-                            Evaluation failed: {item.error}
-                          </div>
-                        ) : null}
-
-                        {item.status === 'evaluated' ? (
-                          <EvaluationImageCard
-                            evaluation={item.evaluation}
-                            summary={item.overall?.summary}
-                          >
-                            <label className="flex items-center justify-between gap-2 text-xs text-foreground/70">
-                              <span className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  className="h-3.5 w-3.5 rounded border-border/60 accent-foreground"
-                                  checked={item.include}
-                                  onChange={(event) =>
-                                    handleToggleFormInclude(item.id, event.target.checked)
-                                  }
-                                />
-                                Include in automation
-                              </span>
-                              {item.include && !item.evaluation?.acceptable ? (
-                                <span className="text-foreground/60 italic">Override enabled</span>
-                              ) : null}
-                            </label>
-                          </EvaluationImageCard>
-                        ) : null}
                       </div>
                     ))}
                   </div>

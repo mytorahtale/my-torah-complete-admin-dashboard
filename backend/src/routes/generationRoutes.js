@@ -30,7 +30,6 @@ router.get('/:id', generationController.getGenerationById);
  * @access  Public
  */
 router.post('/', validateGeneration, generationController.generateImage);
-router.post('/ranked', validateGeneration, generationController.generateRankedImages);
 
 /**
  * @route   POST /api/generations/:id/download

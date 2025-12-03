@@ -59,23 +59,14 @@ export const bookAPI = {
   duplicate: (id, data) => api.post(`/books/${id}/duplicate`, data),
   delete: (id) => api.delete(`/books/${id}`),
   updateStatus: (id, status) => api.patch(`/books/${id}/status`, { status }),
-  generateStorybook: (id, data) =>
-    api.post(`/books/${id}/storybooks`, data, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
   startAutoStorybook: (id, data) => api.post(`/books/${id}/storybooks/auto`, data),
-  getStorybookAssetPages: (bookId, assetId) =>
-    api.get(`/books/${bookId}/storybooks/${assetId}/pages`),
-  regenerateStorybookPage: (bookId, assetId, pageOrder, data = {}) =>
-    api.post(`/books/${bookId}/storybooks/${assetId}/pages/${pageOrder}/regenerate`, data),
-  regenerateStorybookPdf: (bookId, assetId, data = {}) =>
-    api.post(`/books/${bookId}/storybooks/${assetId}/regenerate`, data),
-  confirmStorybookPdf: (bookId, assetId, data = {}) =>
-    api.post(`/books/${bookId}/storybooks/${assetId}/confirm`, data),
-  selectStorybookPageCandidate: (bookId, assetId, pageOrder, data = {}) =>
-    api.post(`/books/${bookId}/storybooks/${assetId}/pages/${pageOrder}/select`, data),
   getStorybookJobs: (id, params) => api.get(`/books/${id}/storybooks/jobs`, { params }),
   getStorybookJob: (bookId, jobId) => api.get(`/books/${bookId}/storybooks/jobs/${jobId}`),
+  applyStorybookCandidate: (bookId, jobId, pageOrder, body) =>
+    api.post(`/books/${bookId}/storybooks/jobs/${jobId}/candidates`, {
+      pageOrder,
+      ...body,
+    }),
   generateCoverPreview: (formData) =>
     api.post('/books/cover-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -94,14 +85,11 @@ export const userAPI = {
   update: (id, data) => api.put(`/users/${id}`, data),
   delete: (id) => api.delete(`/users/${id}`),
   uploadImage: (id, file, options = {}) => {
-    const { onUploadProgress, override = false, evaluation } = options;
+    const { onUploadProgress, override = false } = options;
     const formData = new FormData();
     formData.append('image', file);
     if (override) {
       formData.append('override', 'true');
-    }
-    if (evaluation) {
-      formData.append('evaluation', JSON.stringify(evaluation));
     }
     return api.post(`/users/${id}/images/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -135,7 +123,6 @@ export const generationAPI = {
   getAll: (params) => api.get('/generations', { params }),
   getById: (id) => api.get(`/generations/${id}`),
   create: (data) => api.post('/generations', data),
-  createRanked: (data) => api.post('/generations/ranked', data),
   download: (id) => api.post(`/generations/${id}/download`),
   getByUser: (userId) => api.get(`/generations/user/${userId}`),
 };
