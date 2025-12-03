@@ -1249,7 +1249,7 @@ const resolveAssetUrl = (asset) => {
 const getDisplayPageNumber = (pageType, pageOrder) => {
   if (pageType === 'cover') return 1;
   if (pageType === 'dedication') return 2;
-  return Number.isFinite(pageOrder) && pageOrder > 0 ? pageOrder : 0;
+  return Number.isFinite(pageOrder) && pageOrder > 0 ? pageOrder : pageOrder;
 };
 
 const buildPagePreviewModel = ({
@@ -1265,7 +1265,7 @@ const buildPagePreviewModel = ({
   const safeIndex = Number.isInteger(index) ? index : 0;
   const rawType = page.pageType;
   const pageType = rawType === 'cover' ? 'cover' : rawType === 'dedication' ? 'dedication' : 'story';
-  const pageLabel = getDisplayPageNumber(pageType, page.order, safeIndex);
+  const pageLabel = getDisplayPageNumber(pageType, page.order);
   const cacheToken = page.updatedAt || assetUpdatedAt || `${assetIdentifier}-${pageLabel}`;
 
   const renderedImageSrc = page.renderedImage
@@ -1904,6 +1904,114 @@ const resolveAssetVariant = (asset) => {
   return value === 'split' ? 'split' : 'standard';
 };
 
+const normalisePageType = (raw, order) => {
+  if (raw === 'cover' || raw === 'dedication' || raw === 'story') return raw;
+  if (order === 1) return 'cover';
+  if (order === 2) return 'dedication';
+  return 'story';
+};
+
+const normaliseCharacterPosition = (pageType, raw) => {
+  if (!raw) {
+    if (pageType === 'cover') return 'right';
+    if (pageType === 'dedication') return 'left';
+    return null;
+  }
+  const value = String(raw).trim().toLowerCase();
+  if (value === 'left' || value === 'right') return value;
+  if (pageType === 'cover') return 'right';
+  if (pageType === 'dedication') return 'left';
+  return null;
+};
+
+const mergePdfAndJobPages = (pdfPages = [], jobPages = []) => {
+  if (!Array.isArray(pdfPages)) pdfPages = [];
+  if (!Array.isArray(jobPages)) jobPages = [];
+
+  const jobByOrder = new Map();
+  jobPages.forEach((page) => {
+    const key =
+      Number.isFinite(page.order) && page.order !== null && page.order !== undefined
+        ? Number(page.order)
+        : null;
+    if (key !== null && !jobByOrder.has(key)) {
+      jobByOrder.set(key, page);
+    }
+  });
+
+  return pdfPages.map((pdfPage, index) => {
+    const order =
+      Number.isFinite(pdfPage.order) && pdfPage.order !== null && pdfPage.order !== undefined
+        ? Number(pdfPage.order)
+        : index + 1;
+    const jobPage =
+      jobByOrder.get(order) || (index < jobPages.length ? jobPages[index] : null) || {};
+
+    const pageType = normalisePageType(jobPage.pageType || pdfPage.pageType, order);
+    const prompt = jobPage.prompt || pdfPage.prompt || '';
+    const text =
+      typeof pdfPage.text === 'string'
+        ? pdfPage.text
+        : typeof jobPage.text === 'string'
+        ? jobPage.text
+        : '';
+
+    const candidateAssetsSource =
+      (Array.isArray(pdfPage.candidateAssets) && pdfPage.candidateAssets.length
+        ? pdfPage.candidateAssets
+        : null) ||
+      (Array.isArray(jobPage.candidateAssets) && jobPage.candidateAssets.length
+        ? jobPage.candidateAssets
+        : []);
+
+    const selectedCandidateIndexSource = Number.isFinite(
+      pdfPage.selectedCandidateIndex
+    )
+      ? pdfPage.selectedCandidateIndex
+      : Number.isFinite(jobPage.selectedCandidateIndex)
+      ? jobPage.selectedCandidateIndex
+      : null;
+
+    const rawPosition =
+      jobPage.characterPositionResolved ||
+      jobPage.characterPosition ||
+      pdfPage.characterPositionResolved ||
+      pdfPage.characterPosition ||
+      null;
+
+    const resolvedPosition = normaliseCharacterPosition(pageType, rawPosition);
+
+    const merged = {
+      ...pdfPage,
+      order,
+      pageType,
+      prompt,
+      text,
+      candidateAssets: Array.isArray(candidateAssetsSource)
+        ? candidateAssetsSource
+        : [],
+      selectedCandidateIndex: Number.isFinite(selectedCandidateIndexSource)
+        ? selectedCandidateIndexSource
+        : null,
+      characterPosition: resolvedPosition,
+      characterPositionResolved: resolvedPosition,
+    };
+
+    // Preserve cover/dedication page metadata from PDF snapshot if present
+    if (pdfPage.coverPage) {
+      merged.coverPage = { ...pdfPage.coverPage };
+    }
+    if (pdfPage.dedicationPage) {
+      merged.dedicationPage = { ...pdfPage.dedicationPage };
+    }
+    if (pdfPage.cover) {
+      merged.cover = { ...pdfPage.cover };
+    }
+
+    return merged;
+  });
+};
+
 // Page Thumbnail Component - matches main preview exactly
 const PageThumbnail = React.memo(
   ({ page, index, isActive, onClick, assetUpdatedAt, assetIdentifier, readerName, readerGender }) => {
@@ -2410,6 +2518,9 @@ function Storybooks() {
     }
 
     const snapshot = JSON.parse(JSON.stringify(updatedAsset));
+    // Ensure the active pdfAsset always carries the parent Storybook job id
+    snapshot.jobId =
+      snapshot.jobId || snapshot.storybookJobId || updatedAssetWithJob._id || null;
     setActiveAsset(snapshot);
     if (Array.isArray(snapshot.pages) && snapshot.pages.length) {
       setActiveAssetPages(normaliseAssetPages(snapshot.pages));
@@ -2693,40 +2804,30 @@ function Storybooks() {
   };
 
   const handleRegeneratePdf = async () => {
+    // Regenerate the PDF for the existing StorybookJob using its current pages
+    // (including any updated candidate selections). No new automation run.
     if (!activeAsset || !selectedBookId) {
       toast.error('Open a storybook to regenerate the PDF');
       return;
     }
 
-    const assetIdentifier = activeAsset._id || activeAsset.key;
-    if (!assetIdentifier) {
-      toast.error('Missing storybook identifier for PDF regeneration');
+    const jobIdentifier =
+      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || null;
+
+    if (!jobIdentifier) {
+      toast.error('Missing storybook job identifier for PDF regeneration');
       return;
     }
 
+    if (isRegeneratingPdf) return;
+
     setIsRegeneratingPdf(true);
     try {
-      const readerIdPayload =
-        selectedReader?._id || (activeAsset.readerId ? String(activeAsset.readerId) : '');
-      const readerNamePayload =
-        selectedReader?.name || activeAsset.readerName || '';
-      const readerGenderPayload =
-        selectedReader?.gender || activeAsset.readerGender || '';
-
-      const regeneratePayload = {
-        title: activeAsset.title,
-      };
-      if (readerIdPayload) {
-        regeneratePayload.readerId = readerIdPayload;
+      const response = await bookAPI.getStorybookJob(selectedBookId, jobIdentifier);
+      if (response?.success === false) {
+        throw new Error(response?.message || 'Failed to trigger PDF regeneration');
       }
-      if (readerNamePayload) {
-        regeneratePayload.readerName = readerNamePayload;
-      }
-      if (readerGenderPayload) {
-        regeneratePayload.readerGender = readerGenderPayload;
-      }
-
-      throw new Error('PDF regeneration via book assets has been disabled; rerun automation instead.');
+      toast.success('Regenerating storybook PDF with current selections…');
     } catch (error) {
       toast.error(`Failed to regenerate PDF: ${error.message}`);
     } finally {
@@ -2833,8 +2934,12 @@ function Storybooks() {
 
   const handleApplyCandidate = async (order, candidateIndex) => {
     if (!activeAsset || !selectedBookId || order === undefined || order === null) return;
-    const assetIdentifier = activeAsset._id;
-    if (!assetIdentifier) {
+
+    // Use the underlying Storybook job identifier, not the pdfAsset _id
+    const jobIdentifier =
+      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || null;
+
+    if (!jobIdentifier) {
       toast.error('Missing storybook job identifier for candidate selection');
       return;
     }
@@ -2843,7 +2948,7 @@ function Storybooks() {
     setApplyingCandidateKey(selectionKey);
 
     try {
-      await bookAPI.applyStorybookCandidate(selectedBookId, assetIdentifier, order, {
+      await bookAPI.applyStorybookCandidate(selectedBookId, jobIdentifier, order, {
         candidateIndex,
       });
       toast.success('Candidate applied. PDF will update shortly.');
@@ -2891,6 +2996,18 @@ function Storybooks() {
     const isStoryPage = pageRole === 'story';
     const hasCandidateAssets =
       Array.isArray(currentPage?.candidateAssets) && currentPage.candidateAssets.length > 0;
+
+    // Normalise selectedCandidateIndex to match backend semantics where
+    // historical values may be zero-based but the UI is one-based.
+    const rawSelectedIndex = Number(currentPage?.selectedCandidateIndex);
+    const hasRawSelectedIndex = Number.isFinite(rawSelectedIndex);
+    const zeroBasedSelectedIndex =
+      hasRawSelectedIndex && rawSelectedIndex > 0 ? rawSelectedIndex - 1 : hasRawSelectedIndex ? rawSelectedIndex : null;
+    const displaySelectedIndex =
+      zeroBasedSelectedIndex != null && zeroBasedSelectedIndex >= 0
+        ? zeroBasedSelectedIndex + 1
+        : null;
+
     const shouldShowCandidateSection =
       isRegenerablePage && (hasCandidateAssets || Boolean(activeAsset?.trainingId));
     const assetReaderIdString = activeAsset?.readerId
@@ -3183,8 +3300,8 @@ function Storybooks() {
                       <div className="flex items-center justify-between text-[10px] sm:text-xs uppercase tracking-wide text-foreground/60">
                         <span className="font-semibold">Candidate images</span>
                         <span className="text-foreground/50">
-                          {Number.isFinite(currentPage?.selectedCandidateIndex)
-                            ? `Selected: ${currentPage.selectedCandidateIndex}`
+                          {Number.isFinite(displaySelectedIndex)
+                            ? `Selected: ${displaySelectedIndex}`
                             : 'Choose alternate'}
                         </span>
                       </div>
@@ -3201,8 +3318,7 @@ function Storybooks() {
                               ? 'dedication'
                               : pageLabel);
                           const candidateKey = `${orderToken}-${optionNumber}`;
-                          const isSelected =
-                            currentPage.selectedCandidateIndex === optionNumber;
+                          const isSelected = displaySelectedIndex === optionNumber;
                           const isApplying = applyingCandidateKey === candidateKey;
                           return (
                             <div

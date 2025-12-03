@@ -4,16 +4,6 @@ const StorybookJob = require('../models/StorybookJob');
 const { downloadFromS3, uploadBufferToS3, generateBookCharacterOverlayKey, getSignedUrlForKey } = require('../config/s3');
 const { rebuildPdfForJob } = require('./storybookWorkflow');
 
-const normalizeCharacterPosition = (value, fallback = null) => {
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'left' || normalized === 'right') {
-      return normalized;
-    }
-  }
-  return fallback;
-};
-
 const createEvent = (type, message, metadata = null) => ({
   type,
   message,
@@ -116,12 +106,6 @@ async function applyCandidateSelection({ jobId, pageToken, candidateIndex }) {
       candidateIndex,
     })
   );
-
-  const pagePosition = normalizeCharacterPosition(page.characterPosition, null);
-  if (!pagePosition) {
-    page.characterPosition =
-      page.pageType === 'cover' ? 'right' : page.pageType === 'dedication' ? 'left' : 'left';
-  }
 
   await job.save();
 

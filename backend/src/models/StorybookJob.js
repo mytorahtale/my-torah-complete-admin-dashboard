@@ -112,6 +112,75 @@ const storybookPageSchema = new mongoose.Schema(
   { _id: true }
 );
 
+// Snapshot of a single PDF page, used for admin preview tooling.
+// This is intentionally richer than the minimal fields required to render the PDF itself
+// so that the frontend can reconstruct cover/dedication layouts, candidate grids, etc.
+const pdfPageSchema = new mongoose.Schema(
+  {
+    order: { type: Number, required: true },
+    text: { type: String, default: '' },
+    quote: { type: String, default: '' },
+
+    // Final composited background and character assets used in the PDF
+    background: { type: imageAssetSchema, default: null },
+    character: { type: imageAssetSchema, default: null },
+    characterOriginal: { type: imageAssetSchema, default: null },
+
+    // Character placement for preview + safety: left/right
+    characterPosition: { type: String, default: null },
+    characterPositionResolved: { type: String, default: null },
+
+    // Link back to the underlying generation & candidate set, if any
+    generationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Generation',
+      default: null,
+    },
+    candidateAssets: {
+      type: [imageAssetSchema],
+      default: [],
+    },
+    selectedCandidateIndex: {
+      type: Number,
+      default: null,
+    },
+
+    // Page role & structured front‑matter metadata
+    pageType: {
+      type: String,
+      enum: ['story', 'cover', 'dedication'],
+      default: 'story',
+    },
+    cover: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    coverPage: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    dedicationPage: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+
+    // Optional pre‑rendered PNG used for fast preview / download
+    renderedImage: {
+      type: imageAssetSchema,
+      default: null,
+    },
+
+    // Resolved child name at generation time (used for placeholder replacement)
+    childName: {
+      type: String,
+      default: '',
+    },
+
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const pdfAssetSchema = new mongoose.Schema(
   {
     key: { type: String, required: true },
@@ -122,20 +191,61 @@ const pdfAssetSchema = new mongoose.Schema(
     pageCount: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
+
+    // Denormalised metadata for convenience when listing assets
+    trainingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Training',
+      default: null,
+    },
+    storybookJobId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StorybookJob',
+      default: null,
+    },
+    readerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    readerName: {
+      type: String,
+      default: '',
+    },
+    readerGender: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    variant: {
+      type: String,
+      default: 'standard',
+    },
+    derivedFromAssetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    derivedFromAssetKey: {
+      type: String,
+      default: null,
+    },
+    confirmedAt: {
+      type: Date,
+      default: null,
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+
+    // Per‑page snapshots
     pages: {
-      type: [
-        new mongoose.Schema(
-          {
-            order: { type: Number, required: true },
-            text: { type: String, default: '' },
-            quote: { type: String, default: '' },
-            background: { type: imageAssetSchema, default: null },
-            character: { type: imageAssetSchema, default: null },
-            updatedAt: { type: Date, default: Date.now },
-          },
-          { _id: false }
-        ),
-      ],
+      type: [pdfPageSchema],
       default: [],
     },
   },

@@ -302,6 +302,10 @@ const sanitizeCoverPageForSnapshot = (coverPage) => {
   return {
     backgroundImage: sanitizeAssetForSnapshot(cloned.backgroundImage),
     qrCode: sanitizeAssetForSnapshot(cloned.qrCode),
+    // Preserve the character image used on the cover so the admin preview
+    // can mirror the final PDF layout.
+    characterImage: sanitizeAssetForSnapshot(cloned.characterImage),
+    characterImageOriginal: sanitizeAssetForSnapshot(cloned.characterImageOriginal),
     characterPromptMale: normalizePromptText(cloned.characterPromptMale),
     characterPromptFemale: normalizePromptText(cloned.characterPromptFemale),
     leftSide: {
@@ -325,6 +329,11 @@ const sanitizeDedicationForSnapshot = (dedicationPage) => {
     secondTitle: safeText(cloned.secondTitle),
     characterPromptMale: normalizePromptText(cloned.characterPromptMale),
     characterPromptFemale: normalizePromptText(cloned.characterPromptFemale),
+    // Preserve hero image choices so the admin dedication preview can show
+    // the same child placement as the PDF.
+    kidImage: sanitizeAssetForSnapshot(cloned.kidImage),
+    generatedImage: sanitizeAssetForSnapshot(cloned.generatedImage),
+    generatedImageOriginal: sanitizeAssetForSnapshot(cloned.generatedImageOriginal),
   };
 };
 
@@ -974,6 +983,8 @@ const buildPdfAsset = async ({ book, job, pages }) => {
       background: sanitizeAssetForSnapshot(page.background),
       character: sanitizeAssetForSnapshot(page.character),
       characterOriginal: sanitizeAssetForSnapshot(page.characterOriginal),
+      characterPosition: page.characterPosition || null,
+      characterPositionResolved: page.characterPositionResolved || null,
       generationId: page.generationId || null,
       candidateAssets: sanitizeAssetListForSnapshot(page.candidateAssets),
       selectedCandidateIndex: Number.isFinite(page.selectedCandidateIndex)
