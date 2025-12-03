@@ -354,34 +354,14 @@ const computeJobProgress = (job) => {
   return Math.floor((average * 0.9) / 1);
 };
 
-const computeEtaSeconds = (job, progress) => {
-  if (!job?.startedAt) return null;
-  if (!Number.isFinite(progress) || progress <= 0 || progress >= 100) return null;
-  const elapsedSeconds = (Date.now() - new Date(job.startedAt).getTime()) / 1000;
-  if (elapsedSeconds <= 0) return null;
-  const rate = progress / elapsedSeconds; // percent per second
-  if (rate <= 0) return null;
-  const remaining = (100 - progress) / rate;
-  if (!Number.isFinite(remaining) || remaining < 0) return null;
-  return Math.round(remaining);
-};
-
 const syncComputedFields = async (jobDoc) => {
   if (!jobDoc) return null;
   const jobPlain = jobDoc.toObject({ depopulate: true });
   const progress = computeJobProgress(jobPlain);
-  const eta = computeEtaSeconds(jobPlain, progress);
   let needsSave = false;
 
   if (jobDoc.progress !== progress) {
     jobDoc.progress = progress;
-    needsSave = true;
-  }
-  if (
-    (eta === null && jobDoc.estimatedSecondsRemaining !== null) ||
-    (eta !== null && jobDoc.estimatedSecondsRemaining !== eta)
-  ) {
-    jobDoc.estimatedSecondsRemaining = eta;
     needsSave = true;
   }
 
@@ -391,7 +371,6 @@ const syncComputedFields = async (jobDoc) => {
 
   const snapshot = jobDoc.toObject({ depopulate: true });
   snapshot.progress = progress;
-  snapshot.estimatedSecondsRemaining = eta;
   return snapshot;
 };
 
@@ -400,9 +379,7 @@ const emitJob = (jobDoc) => {
   const snapshot =
     typeof jobDoc.toObject === 'function' ? jobDoc.toObject({ depopulate: true }) : jobDoc;
   const progress = computeJobProgress(snapshot);
-  const eta = computeEtaSeconds(snapshot, progress);
   snapshot.progress = progress;
-  snapshot.estimatedSecondsRemaining = eta;
   emitStorybookUpdate(snapshot);
   return snapshot;
 };
@@ -1862,7 +1839,6 @@ const listStorybookJobsForBook = async (bookId, limit = 10, options = {}) => {
   return jobs.map((job) => {
     const snapshot = job.toObject({ depopulate: true });
     snapshot.progress = computeJobProgress(snapshot);
-    snapshot.estimatedSecondsRemaining = computeEtaSeconds(snapshot, snapshot.progress);
 
     // In minimal mode, exclude large arrays to reduce payload size
     if (minimal) {
@@ -1893,4 +1869,8 @@ module.exports = {
   buildCoverPageContent,
   buildDedicationPageContent,
   rebuildPdfForJob,
+  // Exposed for candidate selection service so that applying
+  // a candidate image uses the same background‑removal and
+  // book character slot pipeline as initial automation.
+  copyAssetToBookCharacterSlot,
 };

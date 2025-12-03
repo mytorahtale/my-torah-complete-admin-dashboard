@@ -1003,12 +1003,6 @@ function Automate() {
                               ? '100%'
                               : '—'}
                           </p>
-                          <p>
-                            ETA:{' '}
-                            {storybookSnapshot?.estimatedSecondsRemaining
-                              ? `${storybookSnapshot.estimatedSecondsRemaining}s`
-                              : '—'}
-                          </p>
                           {storybookSnapshot?.error ? (
                             <div className="mt-2 rounded-lg border border-foreground/20 bg-foreground/10 p-2.5">
                               <p className="text-xs font-medium text-foreground/70">

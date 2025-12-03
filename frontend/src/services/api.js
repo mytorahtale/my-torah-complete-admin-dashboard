@@ -69,6 +69,11 @@ export const bookAPI = {
     }),
   regenerateStorybookPdf: (bookId, jobId) =>
     api.post(`/books/${bookId}/storybooks/jobs/${jobId}/regenerate-pdf`),
+  confirmStorybook: (bookId, jobId) =>
+    api.post(`/books/${bookId}/storybooks/jobs/${jobId}/confirm`),
+  getConfirmedStorybooks: (bookId) => api.get(`/books/${bookId}/storybooks/confirmed`),
+  deleteConfirmedStorybook: (bookId, confirmedId) =>
+    api.delete(`/books/${bookId}/storybooks/confirmed/${confirmedId}`),
   generateCoverPreview: (formData) =>
     api.post('/books/cover-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

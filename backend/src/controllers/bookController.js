@@ -1958,10 +1958,20 @@ exports.deleteBook = async (req, res) => {
       collectAssetListKeys(generation.imageAssets);
     });
 
+    // Confirmed storybooks for this book
+    const ConfirmedStorybook = require('../models/ConfirmedStorybook');
+    const confirmedList = await ConfirmedStorybook.find({ bookId: id }).lean();
+    confirmedList.forEach((item) => {
+      if (item.pdfKey) {
+        keysToDelete.add(item.pdfKey);
+      }
+    });
+
     // Delete DB documents
     await Promise.all([
       StorybookJob.deleteMany({ bookId: id }),
       Generation.deleteMany({ 'storybookContext.bookId': id }),
+      ConfirmedStorybook.deleteMany({ bookId: id }),
       Book.findByIdAndDelete(id),
     ]);
 

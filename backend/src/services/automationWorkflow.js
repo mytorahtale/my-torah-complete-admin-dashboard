@@ -130,7 +130,6 @@ const sanitiseStorybookSnapshot = (job) => {
     _id: plain._id,
     status: plain.status,
     progress: clampProgress(plain.progress || 0),
-    estimatedSecondsRemaining: plain.estimatedSecondsRemaining || null,
     error: plain.error || null,
     events: plain.events || [],
     pages: plain.pages || [],
@@ -862,7 +861,6 @@ const listAutomationRuns = async (options = {}) => {
           {
             status: '$storybookSnapshot.status',
             progress: { $ifNull: ['$storybookSnapshot.progress', 0] },
-            estimatedSecondsRemaining: '$storybookSnapshot.estimatedSecondsRemaining',
             error: '$storybookSnapshot.error',
             pdfAsset: '$storybookSnapshot.pdfAsset',
           },

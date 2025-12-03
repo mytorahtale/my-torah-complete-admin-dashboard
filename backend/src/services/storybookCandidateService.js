@@ -1,13 +1,6 @@
-const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const StorybookJob = require('../models/StorybookJob');
-const {
-  downloadFromS3,
-  uploadBufferToS3,
-  generateBookCharacterOverlayKey,
-  getSignedUrlForKey,
-} = require('../config/s3');
-const { getStorybookJobById } = require('./storybookWorkflow');
+const { getStorybookJobById, copyAssetToBookCharacterSlot } = require('./storybookWorkflow');
 
 const createEvent = (type, message, metadata = null) => ({
   type,
@@ -57,40 +50,18 @@ async function applyCandidateSelection({ jobId, pageToken, candidateIndex }) {
     throw new Error('Book not found for candidate selection');
   }
 
-  const bookSlug =
-    book.slug || `${String(book.name || 'book').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${String(book._id).slice(-6)}`;
+  // Use the shared pipeline to copy the candidate into the book's
+  // character slot and run background removal where appropriate
+  // (story/cover pages), so the stored asset matches the final PDF.
+  const characterAsset = await copyAssetToBookCharacterSlot({
+    book,
+    page,
+    asset: candidate,
+  });
 
-  const originalBuffer = await downloadFromS3(candidate.key);
-  if (!originalBuffer || !originalBuffer.length) {
-    throw new Error('Failed to download candidate image from S3');
+  if (!characterAsset) {
+    throw new Error('Failed to prepare candidate image for this page');
   }
-
-  const targetKey = generateBookCharacterOverlayKey(
-    bookSlug,
-    page.order || 0,
-    candidate.originalName || `character-${page.order || 0}.png`
-  );
-
-  const uploadMeta = await uploadBufferToS3(
-    originalBuffer,
-    targetKey,
-    candidate.contentType || 'image/png',
-    { acl: 'public-read' }
-  );
-
-  const signedUrl = (await getSignedUrlForKey(targetKey).catch(() => null)) || uploadMeta.url;
-
-  const characterAsset = {
-    key: targetKey,
-    url: uploadMeta.url,
-    downloadUrl: uploadMeta.url,
-    signedUrl,
-    size: originalBuffer.length,
-    contentType: candidate.contentType || 'image/png',
-    uploadedAt: new Date(),
-    originalName: candidate.originalName || `character-${page.order || 0}.png`,
-    backgroundRemoved: Boolean(candidate.backgroundRemoved),
-  };
 
   page.characterAsset = characterAsset;
   page.characterAssetOriginal = {

@@ -193,6 +193,7 @@ function Books() {
   const [isDuplicating, setIsDuplicating] = useState(false);
   const [duplicateOptions, setDuplicateOptions] = useState([]);
   const [isLoadingDuplicateOptions, setIsLoadingDuplicateOptions] = useState(false);
+  const [deletingBookId, setDeletingBookId] = useState(null);
   const formCardRef = useRef(null);
   const latestLoadRequestRef = useRef(null);
   useEffect(() => {
@@ -1443,12 +1444,15 @@ const handleRemovePageImage = (index) => {
   const handleDeleteBook = async (bookId) => {
     if (!window.confirm('Delete this book permanently?')) return;
     try {
+      setDeletingBookId(bookId);
       await bookAPI.delete(bookId);
       toast.success('Book deleted');
       fetchBooks({ withSpinner: false });
       loadDuplicateOptions();
     } catch (error) {
       toast.error(`Failed to delete book: ${error.message}`);
+    } finally {
+      setDeletingBookId(null);
     }
   };
 
@@ -2655,9 +2659,19 @@ const handleRemovePageImage = (index) => {
                 size="sm"
                 className="gap-1"
                 onClick={() => handleDeleteBook(book._id)}
+                disabled={deletingBookId === book._id}
               >
-                <Trash2 className="h-4 w-4" />
-                Delete
+                {deletingBookId === book._id ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
               </Button>
             </CardFooter>
           </Card>

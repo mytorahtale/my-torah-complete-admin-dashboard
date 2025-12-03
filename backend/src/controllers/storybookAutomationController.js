@@ -7,6 +7,10 @@ const {
 } = require('../services/storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
 const { applyCandidateSelection } = require('../services/storybookCandidateService');
+const StorybookJob = require('../models/StorybookJob');
+const ConfirmedStorybook = require('../models/ConfirmedStorybook');
+const { downloadFromS3, uploadBufferToS3 } = require('../config/s3');
+const { splitStorybookPdf } = require('../utils/pdfGenerator');
 
 const isValidObjectId = (value) => {
   if (!value) return false;
@@ -208,6 +212,171 @@ exports.regeneratePdf = async (req, res) => {
     });
   }
 };
+
+exports.confirmPdfForJob = async (req, res) => {
+  try {
+    const { id: bookId, jobId } = req.params;
+
+    if (!isValidObjectId(bookId) || !isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid book or job ID',
+      });
+    }
+
+    const jobDoc = await StorybookJob.findById(jobId);
+    if (!jobDoc) {
+      return res.status(404).json({
+        success: false,
+        message: 'Storybook job not found',
+      });
+    }
+
+    if (String(jobDoc.bookId) !== String(bookId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Storybook job does not belong to this book',
+      });
+    }
+
+    const pdfAsset = jobDoc.pdfAsset;
+    if (!pdfAsset || !pdfAsset.key || !pdfAsset.url) {
+      return res.status(400).json({
+        success: false,
+        message: 'No PDF asset found for this job',
+      });
+    }
+
+    // Load the original PDF from S3 and split it into halves per story page,
+    // keeping the cover page intact.
+    const originalBuffer = await downloadFromS3(pdfAsset.key);
+    if (!originalBuffer || !originalBuffer.length) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to download storybook PDF for confirmation',
+      });
+    }
+
+    const splitResult = await splitStorybookPdf(originalBuffer);
+    const splitBuffer = splitResult.buffer;
+    const splitPageCount = splitResult.pageCount || pdfAsset.pageCount || 0;
+
+    const originalKey = pdfAsset.key || `books/${bookId}/storybook.pdf`;
+    const splitKey = originalKey.endsWith('.pdf')
+      ? originalKey.replace(/\.pdf$/, '-confirmed.pdf')
+      : `${originalKey}-confirmed.pdf`;
+
+    const uploaded = await uploadBufferToS3(splitBuffer, splitKey, 'application/pdf', {
+      acl: 'public-read',
+    });
+
+    const payload = {
+      bookId,
+      storybookJobId: jobDoc._id,
+      pdfKey: splitKey,
+      pdfUrl: uploaded.url,
+      title: pdfAsset.title || jobDoc.title || '',
+      readerId: jobDoc.readerId || null,
+      readerName: jobDoc.readerName || '',
+      readerGender: jobDoc.readerGender || '',
+      trainingId: jobDoc.trainingId || null,
+      size: splitBuffer.length || pdfAsset.size || 0,
+      pageCount: splitPageCount,
+      confirmedAt: new Date(),
+    };
+
+    let confirmed = await ConfirmedStorybook.findOne({
+      bookId,
+      storybookJobId: jobDoc._id,
+    });
+
+    if (confirmed) {
+      Object.assign(confirmed, payload);
+      await confirmed.save();
+    } else {
+      confirmed = await ConfirmedStorybook.create(payload);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Storybook confirmed successfully.',
+      data: confirmed,
+    });
+  } catch (error) {
+    console.error('Error confirming storybook PDF:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to confirm storybook PDF',
+    });
+  }
+};
+
+exports.listConfirmedForBook = async (req, res) => {
+  try {
+    const { id: bookId } = req.params;
+    if (!isValidObjectId(bookId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid book ID',
+      });
+    }
+
+    const items = await ConfirmedStorybook.find({ bookId })
+      .sort({ confirmedAt: -1, createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      count: items.length,
+      data: items,
+    });
+  } catch (error) {
+    console.error('Error listing confirmed storybooks:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to list confirmed storybooks',
+      error: error.message,
+    });
+  }
+};
+
+exports.deleteConfirmed = async (req, res) => {
+  try {
+    const { id: bookId, confirmedId } = req.params;
+    if (!isValidObjectId(bookId) || !isValidObjectId(confirmedId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID',
+      });
+    }
+
+    const existing = await ConfirmedStorybook.findOne({
+      _id: confirmedId,
+      bookId,
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: 'Confirmed storybook not found for this book',
+      });
+    }
+
+    await ConfirmedStorybook.deleteOne({ _id: existing._id });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Confirmed storybook removed from list.',
+    });
+  } catch (error) {
+    console.error('Error deleting confirmed storybook:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to delete confirmed storybook',
+    });
+  }
+};
+
 
 exports.streamJobs = (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

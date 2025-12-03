@@ -1384,7 +1384,79 @@ async function generateStorybookPdf({ title, pages }) {
   };
 }
 
+async function splitStorybookPdf(pdfBuffer) {
+  if (!pdfBuffer || !pdfBuffer.length) {
+    throw new Error('Cannot split empty PDF buffer');
+  }
+
+  const srcDoc = await PDFDocument.load(pdfBuffer);
+  const srcPages = srcDoc.getPages();
+  if (!srcPages.length) {
+    throw new Error('Source PDF has no pages to split');
+  }
+
+  const outDoc = await PDFDocument.create();
+  outDoc.registerFontkit(fontkit);
+
+  // Helper to embed a cropped view of a source page
+  const embedCropped = async (page, box) => {
+    const [embedded] = await outDoc.embedPages([page], [box]);
+    return embedded;
+  };
+
+  for (let index = 0; index < srcPages.length; index += 1) {
+    const srcPage = srcPages[index];
+    const width = srcPage.getWidth();
+    const height = srcPage.getHeight();
+
+    // Do not split the very first page (cover) - copy as‑is
+    if (index === 0) {
+      const [embeddedFull] = await outDoc.embedPages([srcPage]);
+      const page = outDoc.addPage([width, height]);
+      page.drawPage(embeddedFull, {
+        x: 0,
+        y: 0,
+        width,
+        height,
+      });
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+
+    const halfWidth = width / 2;
+
+    // Left half
+    const leftBox = { left: 0, bottom: 0, right: halfWidth, top: height };
+    const leftEmbedded = await embedCropped(srcPage, leftBox);
+    const leftPage = outDoc.addPage([halfWidth, height]);
+    leftPage.drawPage(leftEmbedded, {
+      x: 0,
+      y: 0,
+      width: halfWidth,
+      height,
+    });
+
+    // Right half
+    const rightBox = { left: halfWidth, bottom: 0, right: width, top: height };
+    const rightEmbedded = await embedCropped(srcPage, rightBox);
+    const rightPage = outDoc.addPage([halfWidth, height]);
+    rightPage.drawPage(rightEmbedded, {
+      x: 0,
+      y: 0,
+      width: halfWidth,
+      height,
+    });
+  }
+
+  const splitBytes = await outDoc.save();
+  return {
+    buffer: splitBytes,
+    pageCount: outDoc.getPageCount(),
+  };
+}
+
 module.exports = {
   generateStorybookPdf,
   removeBackground,
+  splitStorybookPdf,
 };

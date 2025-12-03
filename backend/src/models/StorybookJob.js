@@ -304,10 +304,6 @@ const storybookJobSchema = new mongoose.Schema(
       max: 100,
       default: 0,
     },
-    estimatedSecondsRemaining: {
-      type: Number,
-      default: null,
-    },
     error: {
       type: String,
       default: null,

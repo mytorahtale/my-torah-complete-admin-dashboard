@@ -17,6 +17,7 @@ import {
   ChevronDown,
   X,
   FileImage,
+  Trash2,
 } from 'lucide-react';
 import { bookAPI, trainingAPI, userAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -2104,7 +2105,6 @@ function Storybooks() {
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedBook, setSelectedBook] = useState(null);
   const [pages, setPages] = useState([]);
-  const [storyTitle, setStoryTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingBook, setLoadingBook] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false); // retained for compatibility, no UI usage
@@ -2132,6 +2132,7 @@ function Storybooks() {
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [applyingCandidateKey, setApplyingCandidateKey] = useState('');
   const [confirmingAssetId, setConfirmingAssetId] = useState('');
+  const [confirmedStorybooks, setConfirmedStorybooks] = useState([]);
   const preloadRefs = useRef([]);
   const hasLoadedInitialDataRef = useRef(false);
 
@@ -2220,13 +2221,6 @@ function Storybooks() {
         setSelectedBook({
           ...book,
           pageCount: book.pageCount || 0,
-        });
-        setStoryTitle((prev) => {
-          const defaultTitle = `${book.name} Storybook`;
-          if (preserveTitle) {
-            return prev || defaultTitle;
-          }
-          return defaultTitle;
         });
         // Pages will be empty from minimal API, that's OK - we don't need them for the list view
         setPages(
@@ -2479,8 +2473,8 @@ function Storybooks() {
       disconnectJobStream();
       setSelectedBook(null);
       setPages([]);
-      setStoryTitle('');
       setStorybookJobs([]);
+      setConfirmedStorybooks([]);
       handledJobCompletionsRef.current = new Set();
       return;
     }
@@ -2488,6 +2482,19 @@ function Storybooks() {
     fetchBookDetails(selectedBookId);
     fetchStorybookJobs(selectedBookId);
     connectJobStream(selectedBookId);
+
+    bookAPI
+      .getConfirmedStorybooks(selectedBookId)
+      .then((response) => {
+        if (response?.success === false) {
+          throw new Error(response?.message || 'Failed to load confirmed storybooks');
+        }
+        const items = Array.isArray(response?.data) ? response.data : [];
+        setConfirmedStorybooks(items);
+      })
+      .catch((error) => {
+        toast.error(`Failed to load confirmed storybooks: ${error.message}`);
+      });
 
     return () => {
       disconnectJobStream();
@@ -2575,11 +2582,9 @@ function Storybooks() {
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   }, [storybookJobs]);
 
-  const splitAssets = useMemo(() => [], []);
-
   const splitLookup = useMemo(() => {
     const map = new Map();
-    splitAssets.forEach((asset) => {
+    confirmedStorybooks.forEach((asset) => {
       const derivedId = asset?.derivedFromAssetId ? normaliseIdentifier(asset.derivedFromAssetId) : null;
       const derivedKey = asset?.derivedFromAssetKey || null;
       if (derivedId) {
@@ -2590,7 +2595,7 @@ function Storybooks() {
       }
     });
     return map;
-  }, [splitAssets]);
+  }, [confirmedStorybooks]);
 
   const readyLibrary = useMemo(() => {
     return standardAssets
@@ -2665,8 +2670,8 @@ function Storybooks() {
   const totalPages = useMemo(() => pages.length, [pages.length]);
   const totalStorybooks = useMemo(() => standardAssets.length, [standardAssets.length]);
   const totalConfirmedStorybooks = useMemo(
-    () => splitAssets.length,
-    [splitAssets.length]
+    () => confirmedStorybooks.length,
+    [confirmedStorybooks.length]
   );
   const activeJob = useMemo(
     () =>
@@ -2703,7 +2708,7 @@ function Storybooks() {
         readerId: selectedReader?._id || selectedUserId,
         readerName: selectedReader?.name || '',
         readerGender: selectedReader?.gender || '',
-        title: storyTitle || `${selectedBook?.name || 'Storybook'}`,
+        title: selectedBook?.name || 'Storybook',
       });
       if (response?.success === false) {
         throw new Error(response?.message || 'Failed to start automation');
@@ -2757,8 +2762,32 @@ function Storybooks() {
       return;
     }
 
-    // Confirmation/splitting now lives entirely inside StorybookJob/pdfAsset; no separate confirm call.
-    toast.error('Confirmation flow has been disabled; use the latest automated PDF directly.');
+    const jobId = asset.storybookJobId || asset.jobId || asset.storybookJobID || null;
+    if (!jobId) {
+      toast.error('Missing storybook job identifier for confirmation');
+      return;
+    }
+
+    setConfirmingAssetId(assetIdentifier);
+    try {
+      const response = await bookAPI.confirmStorybook(selectedBookId, jobId);
+      if (response?.success === false) {
+        throw new Error(response?.message || 'Failed to confirm storybook');
+      }
+      const confirmed = response?.data;
+      if (confirmed) {
+        setConfirmedStorybooks((previous) => {
+          const next = previous.filter((item) => item._id !== confirmed._id);
+          next.unshift(confirmed);
+          return next;
+        });
+      }
+      toast.success('Storybook confirmed.');
+    } catch (error) {
+      toast.error(`Failed to confirm storybook: ${error.message}`);
+    } finally {
+      setConfirmingAssetId('');
+    }
   };
 
   const handleCloseAssetViewer = () => {
@@ -3601,111 +3630,65 @@ function Storybooks() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Select a book</CardTitle>
-            <CardDescription>
-              Choose a book to pull in its characters and page content.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="book">Book</Label>
-              <SearchableSelect
-                value={selectedBookId}
-                onValueChange={setSelectedBookId}
-                options={books.map((book) => ({
-                  value: book._id,
-                  label: book.name,
-                  searchText: book.name,
-                }))}
-                placeholder="Select a book"
-                searchPlaceholder="Search books..."
-                emptyText="No books found."
-                disabled={!books.length}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="title">Storybook title</Label>
-              <Input
-                id="title"
-                placeholder="My awesome story"
-                value={storyTitle}
-                onChange={(event) => setStoryTitle(event.target.value)}
-                disabled={!selectedBook}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="reader">Reader</Label>
-              <SearchableSelect
-                value={selectedUserId || '__none'}
-                onValueChange={(value) => setSelectedUserId(value === '__none' ? '' : value)}
-                options={[
-                  { value: '__none', label: 'No reader', searchText: 'none' },
-                  ...users.map((user) => ({
-                    value: user._id,
-                    label: user.name,
-                    searchText: user.name,
-                  }))
-                ]}
-                placeholder="Select a reader"
-                searchPlaceholder="Search users..."
-                emptyText="No users found."
-                disabled={!users.length}
-              />
-              <p className="text-xs text-foreground/50">
-                Replaces any {'{name}'} placeholders in the story text.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-  
-        {selectedBook && (
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Automate character generation</CardTitle>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+              <div>
+                <CardTitle>Storybook automation</CardTitle>
                 <CardDescription>
-                  Generate four variations per page, rank them automatically, and update the book
-                  with the best characters before building the PDF.
+                  Choose a book, reader, and training model to generate characters and a PDF in one run.
                 </CardDescription>
-                {activeJob && (
-                  <div className="mt-4 rounded-lg border border-primary/40 bg-primary/10 p-4">
-                    <div className="flex items-start gap-3">
-                      <Loader2 className="h-5 w-5 animate-spin text-primary mt-0.5" />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <p className="font-semibold text-foreground">
-                            {activeJob.title || 'Storybook automation'} in progress
-                          </p>
-                          <Badge variant={getJobStatusMeta(activeJob.status).variant}>
-                            {getJobStatusMeta(activeJob.status).label}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-foreground/70">
-                          Started {formatTimestamp(activeJob.createdAt)}
-                          {activeJob.estimatedSecondsRemaining && (
-                            <span> • ETA {formatEta(activeJob.estimatedSecondsRemaining)}</span>
-                          )}
-                        </p>
-                        {activeJob.progress !== undefined && (
-                          <div className="mt-2">
-                            <div className="flex items-center justify-between text-xs text-foreground/60 mb-1">
-                              <span>Progress</span>
-                              <span>{Math.round(activeJob.progress || 0)}%</span>
-                            </div>
-                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                              <div
-                                className="h-full rounded-full bg-primary transition-all"
-                                style={{ width: `${Math.max(0, Math.min(100, activeJob.progress || 0))}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              </div>
+              {selectedBook && (
+                <p className="text-xs text-foreground/60 sm:text-right">
+                  Selected book:{' '}
+                  <span className="font-medium text-foreground">
+                    {selectedBook.name}
+                  </span>
+                </p>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+              {/* Selection column */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="book">Book</Label>
+                  <SearchableSelect
+                    value={selectedBookId}
+                    onValueChange={setSelectedBookId}
+                    options={books.map((book) => ({
+                      value: book._id,
+                      label: book.name,
+                      searchText: book.name,
+                    }))}
+                    placeholder="Select a book"
+                    searchPlaceholder="Search books..."
+                    emptyText="No books found."
+                    disabled={!books.length}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reader">Reader</Label>
+                  <SearchableSelect
+                    value={selectedUserId || '__none'}
+                    onValueChange={(value) => setSelectedUserId(value === '__none' ? '' : value)}
+                    options={[
+                      { value: '__none', label: 'No reader', searchText: 'none' },
+                      ...users.map((user) => ({
+                        value: user._id,
+                        label: user.name,
+                        searchText: user.name,
+                      })),
+                    ]}
+                    placeholder="Select a reader"
+                    searchPlaceholder="Search users..."
+                    emptyText="No users found."
+                    disabled={!users.length}
+                  />
+                  <p className="text-xs text-foreground/50">
+                    Reader details are used to personalise text placeholders.
+                  </p>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="training">Training model</Label>
                   <SearchableSelect
@@ -3719,7 +3702,7 @@ function Storybooks() {
                         value: training._id,
                         label: training.modelName,
                         searchText: training.modelName,
-                      }))
+                      })),
                     ]}
                     placeholder="Select a training"
                     searchPlaceholder="Search trainings..."
@@ -3737,72 +3720,79 @@ function Storybooks() {
                     </p>
                   )}
                 </div>
-              <div className="space-y-2">
-                <Label>Active run</Label>
-                {activeJob ? (
-                  (() => {
-                    const statusMeta = getJobStatusMeta(activeJob.status);
-                    return (
-                      <div className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium text-foreground">
-                            {activeJob.title || 'Storybook run'}
-                          </span>
-                          <span className="text-xs text-foreground/55">
+              </div>
+
+              {/* Status + action column */}
+              <div className="flex flex-col gap-4">
+                <div className="space-y-2">
+                  <Label>Run status</Label>
+                  {selectedBook ? (
+                    <div className="rounded-lg border border-border/60 bg-card/70 px-3 py-2.5 space-y-1">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {activeJob?.title || `${selectedBook.name} Storybook`}
+                      </p>
+                      {activeJob ? (
+                        <>
+                          <p className="text-[11px] text-foreground/60">
                             Started {formatTimestamp(activeJob.createdAt)}
-                          </span>
-                        </div>
-                        <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
-                      </div>
-                    );
-                  })()
-                ) : (
-                  <div className="rounded-lg border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
-                    No automation in progress
+                          </p>
+                          <p className="text-[11px] font-medium text-foreground/80">
+                            {getJobStatusMeta(activeJob.status).label}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-foreground/60">
+                          No automation in progress for this book.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2.5 text-sm text-foreground/60">
+                      Select a book to see automation runs.
+                    </div>
+                  )}
+                </div>
+
+                {selectedBook && activeJob && activeJob.progress !== undefined && (
+                  <div className="space-y-1 text-[11px]">
+                    <div className="flex items-center justify-between text-foreground/60">
+                      <span>Overall progress</span>
+                      <span>{Math.round(activeJob.progress || 0)}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(100, activeJob.progress || 0)
+                          )}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    className="gap-2"
+                    onClick={handleStartAutomation}
+                    disabled={
+                      !selectedBookId || !selectedUserId || !selectedTrainingId || isAutoGenerating
+                    }
+                  >
+                    {isAutoGenerating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    {isAutoGenerating ? 'Starting…' : 'Start automated run'}
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>Estimated time remaining</Label>
-                {activeJob ? (
-                  <div className="flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2 text-sm text-foreground/70">
-                    <Clock className="h-4 w-4 text-foreground/40" />
-                    <span>
-                      {activeJob.estimatedSecondsRemaining
-                        ? formatEta(activeJob.estimatedSecondsRemaining)
-                        : 'Calculating…'}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
-                    —
-                  </div>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-xs text-foreground/50 sm:max-w-md">
-                Automation uses ranked image generation and Replicate webhooks to stream progress for
-                each page. You&apos;ll see updates here as soon as images are ready.
-              </div>
-              <Button
-                className="gap-2"
-                onClick={handleStartAutomation}
-                disabled={
-                  !selectedBookId || !selectedUserId || !selectedTrainingId || isAutoGenerating
-                }
-              >
-                {isAutoGenerating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-                {isAutoGenerating ? 'Starting…' : 'Start automated run'}
-              </Button>
-            </CardFooter>
-          </Card>
-        </div>
-        )}
+            </div>
+          </CardContent>
+        </Card>
 
         {loadingBook && (
           <div className="flex min-h-[30vh] items-center justify-center text-foreground/55">
@@ -4030,6 +4020,36 @@ function Storybooks() {
                               <Download className="h-4 w-4" />
                               Download PDF
                             </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="gap-1"
+                              onClick={() => {
+                                const jobId =
+                                  asset.storybookJobId ||
+                                  asset.jobId ||
+                                  asset.storybookJobID ||
+                                  null;
+                                if (!jobId) {
+                                  toast.error('Missing storybook job identifier for removal');
+                                  return;
+                                }
+                                if (
+                                  !window.confirm(
+                                    'Remove this generated storybook from the list? This does not delete the book.'
+                                  )
+                                ) {
+                                  return;
+                                }
+                                setStorybookJobs((previous) =>
+                                  previous.filter((job) => job._id !== jobId)
+                                );
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Remove
+                            </Button>
                           </div>
                         </div>
                       );
@@ -4082,14 +4102,30 @@ function Storybooks() {
                 <div>
                   <CardTitle>Confirmed storybooks</CardTitle>
                   <CardDescription>
-                    Split PDFs are stored and ready whenever you need them.
+                    Confirmed PDFs are stored and ready whenever you need them.
                   </CardDescription>
                 </div>
                 <Badge variant="success">{totalConfirmedStorybooks} confirmed</Badge>
               </CardHeader>
               <CardContent className="space-y-3">
-                {splitAssets.length ? (
-                  splitAssets.map((asset) => (
+                {confirmedStorybooks.length ? (
+                  confirmedStorybooks.map((asset) => {
+                    const readerProfile = asset.readerId
+                      ? users.find((user) => user._id === String(asset.readerId))
+                      : null;
+                    const readerDisplayName =
+                      asset.readerName || readerProfile?.name || '—';
+                    const readerDisplayEmail = readerProfile?.email || '—';
+                    const readerDisplayGenderRaw =
+                      asset.readerGender || readerProfile?.gender || '';
+                    const readerDisplayGender = normaliseGenderValue(
+                      readerDisplayGenderRaw
+                    );
+                    const readerGenderText = readerDisplayGender
+                      ? readerDisplayGender.charAt(0).toUpperCase() +
+                        readerDisplayGender.slice(1)
+                      : '—';
+                    return (
                     <div
                       key={asset._id || asset.key}
                       className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4"
@@ -4114,22 +4150,53 @@ function Storybooks() {
                                 : new Date(asset.updatedAt || asset.createdAt || Date.now()).toLocaleString()}
                             </span>
                           </div>
+                          <div className="mt-2 space-y-0.5 text-xs text-emerald-800/80">
+                            <p>Reader: {readerDisplayName}</p>
+                            <p>Email: {readerDisplayEmail}</p>
+                            <p>Gender: {readerGenderText}</p>
+                          </div>
                         </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-1"
-                          onClick={() => window.open(asset.url, '_blank')}
-                        >
-                          <Download className="h-4 w-4" />
-                          Download PDF
-                        </Button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => window.open(asset.pdfUrl || asset.url, '_blank')}
+                          >
+                            <Download className="h-4 w-4" />
+                            Download PDF
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 text-emerald-900 hover:text-emerald-900"
+                            onClick={async () => {
+                              try {
+                                await bookAPI.deleteConfirmedStorybook(
+                                  selectedBookId,
+                                  asset._id
+                                );
+                                setConfirmedStorybooks((previous) =>
+                                  previous.filter((item) => item._id !== asset._id)
+                                );
+                                toast.success('Removed from confirmed list.');
+                              } catch (error) {
+                                toast.error(`Failed to remove: ${error.message}`);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Remove
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/10 p-6 text-center text-sm text-emerald-800/80">
-                    Confirm a storybook to generate a split PDF and keep it ready here.
+                    Confirm a storybook to pin its PDF here for quick access.
                   </div>
                 )}
               </CardContent>
@@ -4184,9 +4251,6 @@ function Storybooks() {
                         <div className="text-right">
                           <p className="text-xs text-foreground/55 font-medium">
                             {Math.round(progressValue)}%
-                            {job.estimatedSecondsRemaining
-                              ? ` • ${formatEta(job.estimatedSecondsRemaining)}`
-                              : ''}
                           </p>
                         </div>
                         <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
