@@ -65,31 +65,20 @@ const resolveReplicateOutput = async (output) => {
   return null;
 };
 
-const loadKidImage = async (source, backgroundRemoved = false) => {
+const loadKidImage = async (source) => {
   if (!source) return null;
 
-  // If buffer provided, load directly (already processed)
   if (Buffer.isBuffer(source)) {
-    console.log('[dedicationGenerator] Loading kid image from buffer (pre-processed)');
     return loadImage(source);
   }
 
-  // If background already removed, skip Bria to avoid quality degradation
-  if (backgroundRemoved) {
-    console.log('[dedicationGenerator] Background already removed, loading image directly');
-    return fetchImage(source);
-  }
-
-  // Only call Bria for new images that need background removal
   if (typeof source === 'string' && replicateClient) {
     try {
-      console.log('[dedicationGenerator] Calling Bria for background removal...');
       const replicateOutput = await replicateClient.run('bria/remove-background', {
         input: { image: source },
       });
       const processedBuffer = await resolveReplicateOutput(replicateOutput);
       if (processedBuffer) {
-        console.log('[dedicationGenerator] Background removed successfully');
         return loadImage(processedBuffer);
       }
       console.warn('[dedicationGenerator] Replicate returned no usable output, using original image');
@@ -104,7 +93,6 @@ const loadKidImage = async (source, backgroundRemoved = false) => {
 const generateDedicationPage = async ({
   backgroundImage,
   kidImage,
-  kidImageBackgroundRemoved = false, // Skip Bria if background already removed
   title = '',
   secondTitle = '',
 }) => {
@@ -122,7 +110,7 @@ const generateDedicationPage = async ({
 
   if (kidImage) {
     try {
-      const hero = await loadKidImage(kidImage, kidImageBackgroundRemoved);
+      const hero = await loadKidImage(kidImage);
       drawKidImage(ctx, hero);
     } catch (error) {
       console.warn('[dedicationGenerator] Failed to draw kid image:', error.message);
