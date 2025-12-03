@@ -1,11 +1,8 @@
 const path = require('path');
 const sharp = require('sharp');
 
-const DEFAULT_QUALITY = 50;
-const SIZE_THRESHOLD_MB = {
-  HIGH: 10,
-  MEDIUM: 4,
-};
+// High quality default - 30% compression (70% quality) preserves colors
+const DEFAULT_QUALITY = 85;
 
 const MIME_BY_FORMAT = {
   jpeg: 'image/jpeg',
@@ -29,11 +26,9 @@ const clampQuality = (value) => {
   return Math.min(100, Math.max(1, Math.round(numeric)));
 };
 
-const selectQualityBySize = (byteLength) => {
-  const sizeMb = byteLength / (1024 * 1024);
-  if (sizeMb > SIZE_THRESHOLD_MB.HIGH) return 35;
-  if (sizeMb >= SIZE_THRESHOLD_MB.MEDIUM) return 45;
-  return 50;
+// Fixed high quality for all sizes - preserves color fidelity
+const selectQualityBySize = () => {
+  return DEFAULT_QUALITY; // 85% quality for all images
 };
 
 const normalizeFormat = (format) => {
@@ -101,22 +96,31 @@ async function compressImageBuffer(buffer, { mimeType, quality, key } = {}) {
         quality: normalizedQuality,
         mozjpeg: true,
         progressive: true,
-        chromaSubsampling: '4:4:4', // keep color fidelity
+        chromaSubsampling: '4:4:4', // Full color fidelity (no subsampling)
       });
       break;
     case 'png':
+      // PNG is lossless - use compression without color reduction
       pipeline.png({
-        compressionLevel: 9,
-        palette: true,
-        quality: normalizedQuality,
-        adaptiveFiltering: true,
+        compressionLevel: 6,        // Balanced (0-9, lower = faster, higher = smaller)
+        palette: false,             // CRITICAL: Keep full 24-bit color (was true = 256 colors only!)
+        adaptiveFiltering: true,    // Better compression
+        effort: 7,                  // Compression effort (1-10)
       });
       break;
     case 'webp':
-      pipeline.webp({ quality: normalizedQuality });
+      pipeline.webp({
+        quality: normalizedQuality,
+        effort: 4,                  // Compression effort
+        smartSubsample: true,       // Better color preservation
+      });
       break;
     case 'avif':
-      pipeline.avif({ quality: normalizedQuality });
+      pipeline.avif({
+        quality: normalizedQuality,
+        effort: 4,
+        chromaSubsampling: '4:4:4', // Full color
+      });
       break;
     default:
       return {

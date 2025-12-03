@@ -287,6 +287,7 @@ async function generateCoverPage(options) {
   const {
     backgroundImage,
     characterImage = null,
+    characterBackgroundRemoved = false, // Skip Bria if background already removed
     leftSide = {},
     rightSide = {},
     qrCode = null,
@@ -319,32 +320,39 @@ async function generateCoverPage(options) {
   let charImage = null;
   if (characterImage) {
     try {
-      console.log('Loading and removing background from character image...');
-
-      // Determine if characterImage is a URL or buffer
-      let imageUrl;
-      if (Buffer.isBuffer(characterImage)) {
-        // If it's a buffer, we need to convert it to a URL or handle it differently
-        // For now, let's assume it's a URL string
-        imageUrl = characterImage;
+      // If background is already removed, load directly without calling Bria
+      if (characterBackgroundRemoved) {
+        console.log('[coverGenerator] Background already removed, loading character directly');
+        charImage = await loadImageFromSource(characterImage);
+        console.log('[coverGenerator] Character image loaded successfully (pre-processed)');
       } else {
-        imageUrl = characterImage;
+        console.log('[coverGenerator] Loading and removing background from character image...');
+
+        // Determine if characterImage is a URL or buffer
+        let imageUrl;
+        if (Buffer.isBuffer(characterImage)) {
+          // If it's a buffer, we need to convert it to a URL or handle it differently
+          // For now, let's assume it's a URL string
+          imageUrl = characterImage;
+        } else {
+          imageUrl = characterImage;
+        }
+
+        // Remove background using Replicate API
+        const removeBgInput = { image: imageUrl };
+        const bgRemovedOutput = await replicate.run('bria/remove-background', {
+          input: removeBgInput,
+        });
+
+        // Load the background-removed image
+        const bgRemovedImageResponse = await fetch(bgRemovedOutput);
+        const bgRemovedImageBuffer = await bgRemovedImageResponse.buffer();
+        charImage = await loadImage(Buffer.from(bgRemovedImageBuffer));
+
+        console.log('[coverGenerator] Background removed successfully from character image');
       }
-
-      // Remove background using Replicate API
-      const removeBgInput = { image: imageUrl };
-      const bgRemovedOutput = await replicate.run('bria/remove-background', {
-        input: removeBgInput,
-      });
-
-      // Load the background-removed image
-      const bgRemovedImageResponse = await fetch(bgRemovedOutput);
-      const bgRemovedImageBuffer = await bgRemovedImageResponse.buffer();
-      charImage = await loadImage(Buffer.from(bgRemovedImageBuffer));
-
-      console.log('Background removed successfully from character image');
     } catch (error) {
-      console.warn('Failed to load or process character image:', error.message);
+      console.warn('[coverGenerator] Failed to load or process character image:', error.message);
     }
   }
 
