@@ -877,6 +877,10 @@ async function generateStorybookPdf({ title, pages }) {
 
       if (coverPage) {
         try {
+          // Check if character image already has background removed to avoid double-processing
+          const coverCharAsset = coverPage.characterImage || pageData.character;
+          const coverCharBackgroundRemoved = Boolean(coverCharAsset?.backgroundRemoved);
+
           const coverBuffer = await generateCoverPage({
             backgroundImage:
               (await resolveGeneratorSource(coverPage.backgroundImage)) ||
@@ -884,6 +888,7 @@ async function generateStorybookPdf({ title, pages }) {
             characterImage:
               (await resolveGeneratorSource(coverPage.characterImage)) ||
               (await resolveGeneratorSource(pageData.character)),
+            characterBackgroundRemoved: coverCharBackgroundRemoved,
             leftSide: {
               title: replaceChildPlaceholders(coverPage.leftSide?.title, childName),
               content: replaceChildPlaceholders(coverPage.leftSide?.content, childName),
@@ -988,6 +993,9 @@ async function generateStorybookPdf({ title, pages }) {
         dedication.kidImage ||
         null;
 
+      // Check if kid/hero image already has background removed to avoid double-processing
+      const heroBackgroundRemoved = Boolean(heroAsset?.backgroundRemoved);
+
       const backgroundSource = await resolveGeneratorSource(backgroundAsset);
       const heroSource = await resolveGeneratorSource(heroAsset);
 
@@ -1020,6 +1028,7 @@ async function generateStorybookPdf({ title, pages }) {
             dedicationBuffer = await generateDedicationPage({
               backgroundImage: backgroundCandidate,
               kidImage: heroCandidate,
+              kidImageBackgroundRemoved: heroBackgroundRemoved,
               title: primaryTitle,
               secondTitle: secondaryTitle,
             });
