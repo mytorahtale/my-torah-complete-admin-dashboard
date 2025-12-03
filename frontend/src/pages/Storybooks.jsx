@@ -2133,6 +2133,8 @@ function Storybooks() {
   const [applyingCandidateKey, setApplyingCandidateKey] = useState('');
   const [confirmingAssetId, setConfirmingAssetId] = useState('');
   const [confirmedStorybooks, setConfirmedStorybooks] = useState([]);
+  const [removingJobId, setRemovingJobId] = useState('');
+  const [removingConfirmedId, setRemovingConfirmedId] = useState('');
   const preloadRefs = useRef([]);
   const hasLoadedInitialDataRef = useRef(false);
 
@@ -4025,7 +4027,7 @@ function Storybooks() {
                               size="sm"
                               variant="outline"
                               className="gap-1"
-                              onClick={() => {
+                              onClick={async () => {
                                 const jobId =
                                   asset.storybookJobId ||
                                   asset.jobId ||
@@ -4037,18 +4039,47 @@ function Storybooks() {
                                 }
                                 if (
                                   !window.confirm(
-                                    'Remove this generated storybook from the list? This does not delete the book.'
+                                    'Remove this generated storybook and its run data? This does not delete the book.'
                                   )
                                 ) {
                                   return;
                                 }
-                                setStorybookJobs((previous) =>
-                                  previous.filter((job) => job._id !== jobId)
-                                );
+                                try {
+                                  setRemovingJobId(jobId);
+                                  await bookAPI.deleteStorybookJob(selectedBookId, jobId);
+                                  setStorybookJobs((previous) =>
+                                    previous.filter((job) => job._id !== jobId)
+                                  );
+                                  toast.success('Storybook run removed.');
+                                } catch (error) {
+                                  toast.error(`Failed to remove storybook run: ${error.message}`);
+                                } finally {
+                                  setRemovingJobId('');
+                                }
                               }}
+                              disabled={
+                                Boolean(
+                                  removingJobId &&
+                                    (asset.storybookJobId === removingJobId ||
+                                      asset.jobId === removingJobId ||
+                                      asset.storybookJobID === removingJobId)
+                                )
+                              }
                             >
-                              <Trash2 className="h-4 w-4" />
-                              Remove
+                              {removingJobId &&
+                              (asset.storybookJobId === removingJobId ||
+                                asset.jobId === removingJobId ||
+                                asset.storybookJobID === removingJobId) ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Removing…
+                                </>
+                              ) : (
+                                <>
+                                  <Trash2 className="h-4 w-4" />
+                                  Remove
+                                </>
+                              )}
                             </Button>
                           </div>
                         </div>
@@ -4173,6 +4204,7 @@ function Storybooks() {
                             className="gap-1 text-emerald-900 hover:text-emerald-900"
                             onClick={async () => {
                               try {
+                                setRemovingConfirmedId(asset._id);
                                 await bookAPI.deleteConfirmedStorybook(
                                   selectedBookId,
                                   asset._id
@@ -4183,11 +4215,23 @@ function Storybooks() {
                                 toast.success('Removed from confirmed list.');
                               } catch (error) {
                                 toast.error(`Failed to remove: ${error.message}`);
+                              } finally {
+                                setRemovingConfirmedId('');
                               }
                             }}
+                            disabled={removingConfirmedId === asset._id}
                           >
-                            <Trash2 className="h-4 w-4" />
-                            Remove
+                            {removingConfirmedId === asset._id ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Removing…
+                              </>
+                            ) : (
+                              <>
+                                <Trash2 className="h-4 w-4" />
+                                Remove
+                              </>
+                            )}
                           </Button>
                         </div>
                       </div>
