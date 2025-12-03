@@ -2518,12 +2518,14 @@ function Storybooks() {
     }
 
     const snapshot = JSON.parse(JSON.stringify(updatedAsset));
-    // Ensure the active pdfAsset always carries the parent Storybook job id
     snapshot.jobId =
       snapshot.jobId || snapshot.storybookJobId || updatedAssetWithJob._id || null;
+
+    const pdfPages = Array.isArray(snapshot.pages) ? snapshot.pages : [];
+
     setActiveAsset(snapshot);
-    if (Array.isArray(snapshot.pages) && snapshot.pages.length) {
-      setActiveAssetPages(normaliseAssetPages(snapshot.pages));
+    if (pdfPages.length) {
+      setActiveAssetPages(normaliseAssetPages(pdfPages));
     }
   }, [activeAsset, storybookJobs]);
 
@@ -2687,20 +2689,21 @@ function Storybooks() {
 
   const handleOpenAssetViewer = async (asset) => {
     if (!asset) return;
+
     const assetSnapshot = JSON.parse(JSON.stringify(asset));
     assetSnapshot.variant = resolveAssetVariant(assetSnapshot);
-    const orderedPages = normaliseAssetPages(assetSnapshot.pages);
+    assetSnapshot.jobId =
+      assetSnapshot.jobId || assetSnapshot.storybookJobId || assetSnapshot.storybookJobID || null;
 
     if (asset.readerId) {
       setSelectedUserId(String(asset.readerId));
     }
 
-    setActiveAsset(assetSnapshot);
-    setActiveAssetPages(orderedPages);
-    setActivePageIndex(0);
+    const pdfPages = Array.isArray(assetSnapshot.pages) ? assetSnapshot.pages : [];
 
-    // Pages for generated storybooks are embedded in the automation job payload (pdfAsset.pages),
-    // so we don't need an extra round-trip to fetch them by book/asset ID.
+    setActiveAsset(assetSnapshot);
+    setActiveAssetPages(normaliseAssetPages(pdfPages));
+    setActivePageIndex(0);
   };
 
   const handleConfirmStorybook = async (asset) => {
@@ -2823,11 +2826,11 @@ function Storybooks() {
 
     setIsRegeneratingPdf(true);
     try {
-      const response = await bookAPI.getStorybookJob(selectedBookId, jobIdentifier);
+      const response = await bookAPI.regenerateStorybookPdf(selectedBookId, jobIdentifier);
       if (response?.success === false) {
-        throw new Error(response?.message || 'Failed to trigger PDF regeneration');
+        throw new Error(response?.message || 'Failed to regenerate storybook PDF');
       }
-      toast.success('Regenerating storybook PDF with current selections…');
+      toast.success('Storybook PDF regenerated successfully.');
     } catch (error) {
       toast.error(`Failed to regenerate PDF: ${error.message}`);
     } finally {
@@ -2951,7 +2954,9 @@ function Storybooks() {
       await bookAPI.applyStorybookCandidate(selectedBookId, jobIdentifier, order, {
         candidateIndex,
       });
-      toast.success('Candidate applied. PDF will update shortly.');
+      // No optimistic UI mutation here; wait for SSE + merged pages
+      // to bring in the updated selection from the backend.
+      toast.success('Candidate applied. Regenerate PDF when you are ready.');
     } catch (error) {
       toast.error(`Failed to apply candidate: ${error.message}`);
     } finally {

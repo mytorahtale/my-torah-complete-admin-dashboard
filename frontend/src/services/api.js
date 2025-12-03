@@ -67,6 +67,8 @@ export const bookAPI = {
       pageOrder,
       ...body,
     }),
+  regenerateStorybookPdf: (bookId, jobId) =>
+    api.post(`/books/${bookId}/storybooks/jobs/${jobId}/regenerate-pdf`),
   generateCoverPreview: (formData) =>
     api.post('/books/cover-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

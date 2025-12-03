@@ -1407,14 +1407,16 @@ const rebuildPdfForJob = async (jobId) => {
     .slice()
     .sort((a, b) => (a.order || 0) - (b.order || 0))
     .map((bookPage) => {
-      const jobPage = refreshedJob.pages.find(
-        (entry) =>
-          (entry.pageId && entry.pageId.toString() === bookPage._id.toString()) ||
-          entry.order === bookPage.order
-      );
+      const jobPage =
+        refreshedJob.pages.find(
+          (entry) =>
+            entry.pageType === 'story' &&
+            entry.pageId &&
+            entry.pageId.toString() === bookPage._id.toString()
+        ) || {};
       return {
         bookPage,
-        jobPage: jobPage || {},
+        jobPage,
         isSkipped: jobPage?.status === 'skipped',
       };
     })
@@ -1591,14 +1593,16 @@ const processStorybookJob = async (jobId) => {
   const storyPages = refreshedBook.pages
     .sort((a, b) => (a.order || 0) - (b.order || 0))
     .map((bookPage) => {
-      const jobPage = refreshedJob.pages.find(
-        (entry) =>
-          (entry.pageId && entry.pageId.toString() === bookPage._id.toString()) ||
-          entry.order === bookPage.order
-      );
+      const jobPage =
+        refreshedJob.pages.find(
+          (entry) =>
+            entry.pageType === 'story' &&
+            entry.pageId &&
+            entry.pageId.toString() === bookPage._id.toString()
+        ) || {};
       return {
         bookPage,
-        jobPage: jobPage || {},
+        jobPage,
         isSkipped: jobPage?.status === 'skipped',
       };
     })

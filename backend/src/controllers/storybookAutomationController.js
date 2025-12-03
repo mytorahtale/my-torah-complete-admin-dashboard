@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
-const { startStorybookAutomation, getStorybookJobById, listStorybookJobsForBook } = require('../services/storybookWorkflow');
+const {
+  startStorybookAutomation,
+  getStorybookJobById,
+  listStorybookJobsForBook,
+  rebuildPdfForJob,
+} = require('../services/storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
 const { applyCandidateSelection } = require('../services/storybookCandidateService');
 
@@ -173,6 +178,33 @@ exports.applyCandidate = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to apply storybook candidate',
+    });
+  }
+};
+
+exports.regeneratePdf = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    if (!isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid job ID',
+      });
+    }
+
+    const pdfAsset = await rebuildPdfForJob(jobId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Storybook PDF regenerated successfully.',
+      data: pdfAsset,
+    });
+  } catch (error) {
+    console.error('Error regenerating storybook PDF:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to regenerate storybook PDF',
     });
   }
 };

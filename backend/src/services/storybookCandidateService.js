@@ -1,8 +1,13 @@
 const mongoose = require('mongoose');
 const Book = require('../models/Book');
 const StorybookJob = require('../models/StorybookJob');
-const { downloadFromS3, uploadBufferToS3, generateBookCharacterOverlayKey, getSignedUrlForKey } = require('../config/s3');
-const { rebuildPdfForJob } = require('./storybookWorkflow');
+const {
+  downloadFromS3,
+  uploadBufferToS3,
+  generateBookCharacterOverlayKey,
+  getSignedUrlForKey,
+} = require('../config/s3');
+const { getStorybookJobById } = require('./storybookWorkflow');
 
 const createEvent = (type, message, metadata = null) => ({
   type,
@@ -109,7 +114,9 @@ async function applyCandidateSelection({ jobId, pageToken, candidateIndex }) {
 
   await job.save();
 
-  await rebuildPdfForJob(job._id);
+  // Emit an updated snapshot so any live Storybook streams (SSE)
+  // receive the latest page/candidate state.
+  await getStorybookJobById(job._id);
 
   return {
     jobId: job._id,
