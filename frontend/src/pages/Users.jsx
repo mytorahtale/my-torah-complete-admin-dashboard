@@ -11,6 +11,7 @@ import {
   Maximize2,
   ChevronLeft,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 import { userAPI } from '@/services/api';
 import { Button } from '@/components/ui/button';
