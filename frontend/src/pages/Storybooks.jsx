@@ -1070,8 +1070,50 @@ const renderDedicationPreview = async (canvas, model, signal) => {
 const CoverPagePreview = React.memo(({ model, className = '' }) => {
   const canvasRef = useRef(null);
   const [error, setError] = useState(null);
+  const hasRenderedImage = Boolean(model?.renderedImageSrc);
 
-  if (model.renderedImageSrc) {
+  useEffect(() => {
+    if (hasRenderedImage) {
+      // Using pre-rendered PNG, no canvas work needed
+      return;
+    }
+
+    let cancelled = false;
+    const signal = { cancelled: false };
+    const canvas = canvasRef.current;
+    setError(null);
+    if (!canvas) {
+      return () => {
+        cancelled = true;
+        signal.cancelled = true;
+      };
+    }
+
+    renderCoverPreview(canvas, model, signal).catch((err) => {
+      if (!cancelled) {
+        console.warn('[coverPreview] rendering failed:', err.message);
+        setError(err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      signal.cancelled = true;
+    };
+  }, [
+    hasRenderedImage,
+    model?.cacheToken,
+    model?.backgroundSrc,
+    model?.characterSrc,
+    model?.qrSrc,
+    model?.cover?.headline,
+    model?.cover?.footer,
+    model?.cover?.bodyOverride,
+    model?.cover?.childName,
+    model?.bodyText,
+  ]);
+
+  if (hasRenderedImage) {
     // Backend generates 842x421 images (PDF page size without margins)
     // Container matches PDF aspect ratio
     // Use 'fill' to show complete image without cropping or blank areas
@@ -1086,39 +1128,6 @@ const CoverPagePreview = React.memo(({ model, className = '' }) => {
       </div>
     );
   }
-
-  useEffect(() => {
-    let cancelled = false;
-    const signal = { cancelled: false };
-    const canvas = canvasRef.current;
-    setError(null);
-    if (!canvas) return () => {
-      cancelled = true;
-      signal.cancelled = true;
-    };
-
-    renderCoverPreview(canvas, model, signal).catch((err) => {
-      if (!cancelled) {
-        console.warn('[coverPreview] rendering failed:', err.message);
-        setError(err);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      signal.cancelled = true;
-    };
-  }, [
-    model.cacheToken,
-    model.backgroundSrc,
-    model.characterSrc,
-    model.qrSrc,
-    model.cover?.headline,
-    model.cover?.footer,
-    model.cover?.bodyOverride,
-    model.cover?.childName,
-    model.bodyText,
-  ]);
 
   if (error) {
     return (
@@ -1140,28 +1149,24 @@ const CoverPagePreview = React.memo(({ model, className = '' }) => {
 const DedicationPagePreview = React.memo(({ model, className = '' }) => {
   const canvasRef = useRef(null);
   const [error, setError] = useState(null);
-
-  if (model?.renderedImageSrc) {
-    return (
-      <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
-        <img
-          src={model.renderedImageSrc}
-          alt="Dedication page preview"
-          className="h-full w-full object-cover"
-        />
-      </div>
-    );
-  }
+  const hasRenderedImage = Boolean(model?.renderedImageSrc);
 
   useEffect(() => {
+    if (hasRenderedImage) {
+      // Using pre-rendered PNG, no canvas work needed
+      return;
+    }
+
     let cancelled = false;
     const signal = { cancelled: false };
     const canvas = canvasRef.current;
     setError(null);
-    if (!canvas) return () => {
-      cancelled = true;
-      signal.cancelled = true;
-    };
+    if (!canvas) {
+      return () => {
+        cancelled = true;
+        signal.cancelled = true;
+      };
+    }
 
     renderDedicationPreview(canvas, model, signal).catch((err) => {
       if (!cancelled) {
@@ -1175,12 +1180,25 @@ const DedicationPagePreview = React.memo(({ model, className = '' }) => {
       signal.cancelled = true;
     };
   }, [
+    hasRenderedImage,
     model?.cacheToken,
     model?.dedicationPage?.backgroundSrc,
     model?.dedicationPage?.kidSrc,
     model?.dedicationPage?.title,
     model?.dedicationPage?.secondTitle,
   ]);
+
+  if (hasRenderedImage) {
+    return (
+      <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
+        <img
+          src={model.renderedImageSrc}
+          alt="Dedication page preview"
+          className="h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -1809,80 +1827,6 @@ const resolvePromptForGender = (source = {}, gender = '') => {
   return neutral || male || female || '';
 };
 
-const normaliseAssetPages = (pages) => {
-  if (!Array.isArray(pages)) return [];
-  const pageTypePriority = {
-    cover: -2,
-    dedication: -1,
-    story: 0,
-  };
-  return pages
-    .map((entry) => {
-      const rawType = entry?.pageType;
-      const pageType =
-        rawType === 'cover' ? 'cover' : rawType === 'dedication' ? 'dedication' : 'story';
-      const cover = pageType === 'cover' ? cloneCoverConfig(entry.cover) : null;
-      const coverPage = pageType === 'cover' ? cloneCoverPageConfig(entry.coverPage) : null;
-      const dedicationPage =
-        pageType === 'dedication' ? cloneDedicationPageConfig(entry.dedicationPage) : null;
-
-      const candidateAssetsSource = Array.isArray(entry?.candidateAssets)
-        ? entry.candidateAssets
-        : pageType === 'cover' && Array.isArray(entry?.coverPage?.candidateAssets)
-        ? entry.coverPage.candidateAssets
-        : pageType === 'dedication' && Array.isArray(entry?.dedicationPage?.candidateAssets)
-        ? entry.dedicationPage.candidateAssets
-        : [];
-
-      const selectedCandidateIndexSource = Number.isFinite(entry?.selectedCandidateIndex)
-        ? entry.selectedCandidateIndex
-        : pageType === 'cover' && Number.isFinite(entry?.coverPage?.selectedCandidateIndex)
-        ? entry.coverPage.selectedCandidateIndex
-        : pageType === 'dedication' && Number.isFinite(entry?.dedicationPage?.selectedCandidateIndex)
-        ? entry.dedicationPage.selectedCandidateIndex
-        : null;
-
-      const pagePrompt =
-        typeof entry?.prompt === 'string'
-          ? entry.prompt
-          : pageType === 'cover' && typeof entry?.coverPage?.prompt === 'string'
-          ? entry.coverPage.prompt
-          : pageType === 'dedication' && typeof entry?.dedicationPage?.prompt === 'string'
-          ? entry.dedicationPage.prompt
-          : entry?.text || '';
-     return {
-       ...entry,
-       pageType,
-       cover,
-       coverPage,
-       dedicationPage,
-       background: entry?.background ? { ...entry.background } : null,
-       character: entry?.character ? { ...entry.character } : null,
-       characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
-       candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
-       selectedCandidateIndex: selectedCandidateIndexSource,
-       generationId: entry?.generationId || null,
-       renderedImage: entry?.renderedImage ? { ...entry.renderedImage } : null,
-       childName: typeof entry?.childName === 'string' ? entry.childName : '',
-       prompt: pagePrompt,
-        characterPosition:
-          typeof entry?.characterPosition === 'string' ? entry.characterPosition : null,
-        characterPositionResolved:
-          typeof entry?.characterPositionResolved === 'string'
-            ? entry.characterPositionResolved
-            : typeof entry?.characterPosition === 'string'
-            ? entry.characterPosition
-            : null,
-     };
-   })
-    .sort((a, b) => {
-      const priorityDiff =
-        (pageTypePriority[a.pageType] || 0) - (pageTypePriority[b.pageType] || 0);
-      if (priorityDiff !== 0) return priorityDiff;
-      return (a.order || 0) - (b.order || 0);
-    });
-};
-
 const normaliseIdentifier = (value) => {
   if (!value && value !== 0) return '';
   if (typeof value === 'string') return value;
@@ -1924,6 +1868,81 @@ const normaliseCharacterPosition = (pageType, raw) => {
   return null;
 };
 
+const normaliseAssetPages = (pages) => {
+  if (!Array.isArray(pages)) return [];
+  const pageTypePriority = {
+    cover: -2,
+    dedication: -1,
+    story: 0,
+  };
+  return pages
+    .map((entry) => {
+      const rawType = entry?.pageType;
+      const pageType =
+        rawType === 'cover' ? 'cover' : rawType === 'dedication' ? 'dedication' : 'story';
+      const cover = pageType === 'cover' ? cloneCoverConfig(entry.cover) : null;
+      const coverPage = pageType === 'cover' ? cloneCoverPageConfig(entry.coverPage) : null;
+      const dedicationPage =
+        pageType === 'dedication' ? cloneDedicationPageConfig(entry.dedicationPage) : null;
+
+      const candidateAssetsSource = Array.isArray(entry?.candidateAssets)
+        ? entry.candidateAssets
+        : pageType === 'cover' && Array.isArray(entry?.coverPage?.candidateAssets)
+        ? entry.coverPage.candidateAssets
+        : pageType === 'dedication' && Array.isArray(entry?.dedicationPage?.candidateAssets)
+        ? entry.dedicationPage.candidateAssets
+        : [];
+
+      const selectedCandidateIndexSource = Number.isFinite(entry?.selectedCandidateIndex)
+        ? entry.selectedCandidateIndex
+        : pageType === 'cover' && Number.isFinite(entry?.coverPage?.selectedCandidateIndex)
+        ? entry.coverPage.selectedCandidateIndex
+        : pageType === 'dedication' && Number.isFinite(entry?.dedicationPage?.selectedCandidateIndex)
+        ? entry.dedicationPage.selectedCandidateIndex
+        : null;
+
+      const pagePrompt =
+        typeof entry?.prompt === 'string'
+          ? entry.prompt
+          : pageType === 'cover' && typeof entry?.coverPage?.prompt === 'string'
+          ? entry.coverPage.prompt
+          : pageType === 'dedication' && typeof entry?.dedicationPage?.prompt === 'string'
+          ? entry.dedicationPage.prompt
+          : entry?.text || '';
+
+      return {
+        ...entry,
+        pageType,
+        cover,
+        coverPage,
+        dedicationPage,
+        background: entry?.background ? { ...entry.background } : null,
+        character: entry?.character ? { ...entry.character } : null,
+        characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
+        candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
+        selectedCandidateIndex: selectedCandidateIndexSource,
+        generationId: entry?.generationId || null,
+        renderedImage: entry?.renderedImage ? { ...entry.renderedImage } : null,
+        childName: typeof entry?.childName === 'string' ? entry.childName : '',
+        prompt: pagePrompt,
+        characterPosition:
+          typeof entry?.characterPosition === 'string' ? entry.characterPosition : null,
+        characterPositionResolved:
+          typeof entry?.characterPositionResolved === 'string'
+            ? entry.characterPositionResolved
+            : typeof entry?.characterPosition === 'string'
+            ? entry.characterPosition
+            : null,
+      };
+    })
+    .sort((a, b) => {
+      const priorityDiff =
+        (pageTypePriority[a.pageType] || 0) - (pageTypePriority[b.pageType] || 0);
+      if (priorityDiff !== 0) return priorityDiff;
+      return (a.order || 0) - (b.order || 0);
+    });
+};
+
 const mergePdfAndJobPages = (pdfPages = [], jobPages = []) => {
   if (!Array.isArray(pdfPages)) pdfPages = [];
   if (!Array.isArray(jobPages)) jobPages = [];
@@ -1957,20 +1976,22 @@ const mergePdfAndJobPages = (pdfPages = [], jobPages = []) => {
         : '';
 
     const candidateAssetsSource =
-      (Array.isArray(pdfPage.candidateAssets) && pdfPage.candidateAssets.length
-        ? pdfPage.candidateAssets
-        : null) ||
       (Array.isArray(jobPage.candidateAssets) && jobPage.candidateAssets.length
         ? jobPage.candidateAssets
+        : null) ||
+      (Array.isArray(pdfPage.candidateAssets) && pdfPage.candidateAssets.length
+        ? pdfPage.candidateAssets
         : []);
 
-    const selectedCandidateIndexSource = Number.isFinite(
-      pdfPage.selectedCandidateIndex
-    )
-      ? pdfPage.selectedCandidateIndex
-      : Number.isFinite(jobPage.selectedCandidateIndex)
+    const jobSelected = Number.isFinite(jobPage.selectedCandidateIndex)
       ? jobPage.selectedCandidateIndex
       : null;
+    const pdfSelected = Number.isFinite(pdfPage.selectedCandidateIndex)
+      ? pdfPage.selectedCandidateIndex
+      : null;
+
+    const selectedCandidateIndexSource =
+      jobSelected !== null ? jobSelected : pdfSelected;
 
     const rawPosition =
       jobPage.characterPositionResolved ||
@@ -1980,6 +2001,10 @@ const mergePdfAndJobPages = (pdfPages = [], jobPages = []) => {
       null;
 
     const resolvedPosition = normaliseCharacterPosition(pageType, rawPosition);
+
+    const characterSource = jobPage.characterAsset || pdfPage.character || null;
+    const characterOriginalSource =
+      jobPage.characterAssetOriginal || pdfPage.characterOriginal || null;
 
     const merged = {
       ...pdfPage,
@@ -1993,9 +2018,17 @@ const mergePdfAndJobPages = (pdfPages = [], jobPages = []) => {
       selectedCandidateIndex: Number.isFinite(selectedCandidateIndexSource)
         ? selectedCandidateIndexSource
         : null,
+      character: characterSource || null,
+      characterOriginal: characterOriginalSource || null,
       characterPosition: resolvedPosition,
       characterPositionResolved: resolvedPosition,
     };
+
+    // If the selected candidate changed compared to the last PDF snapshot,
+    // drop the pre-rendered image so the frontend uses live assets instead.
+    if (jobSelected !== null && pdfSelected !== null && jobSelected !== pdfSelected) {
+      merged.renderedImage = null;
+    }
 
     // Preserve cover/dedication page metadata from PDF snapshot if present
     if (pdfPage.coverPage) {
@@ -2522,10 +2555,12 @@ function Storybooks() {
       snapshot.jobId || snapshot.storybookJobId || updatedAssetWithJob._id || null;
 
     const pdfPages = Array.isArray(snapshot.pages) ? snapshot.pages : [];
+    const jobPages = Array.isArray(updatedAssetWithJob.pages) ? updatedAssetWithJob.pages : [];
+    const mergedPages = mergePdfAndJobPages(pdfPages, jobPages);
 
     setActiveAsset(snapshot);
-    if (pdfPages.length) {
-      setActiveAssetPages(normaliseAssetPages(pdfPages));
+    if (mergedPages.length) {
+      setActiveAssetPages(normaliseAssetPages(mergedPages));
     }
   }, [activeAsset, storybookJobs]);
 
@@ -2700,9 +2735,17 @@ function Storybooks() {
     }
 
     const pdfPages = Array.isArray(assetSnapshot.pages) ? assetSnapshot.pages : [];
+    const jobForAsset = storybookJobs.find(
+      (job) =>
+        job._id === assetSnapshot.jobId ||
+        job._id === assetSnapshot.storybookJobId ||
+        job._id === assetSnapshot.storybookJobID
+    );
+    const jobPages = jobForAsset && Array.isArray(jobForAsset.pages) ? jobForAsset.pages : [];
+    const mergedPages = mergePdfAndJobPages(pdfPages, jobPages);
 
     setActiveAsset(assetSnapshot);
-    setActiveAssetPages(normaliseAssetPages(pdfPages));
+    setActiveAssetPages(normaliseAssetPages(mergedPages));
     setActivePageIndex(0);
   };
 
@@ -2830,6 +2873,26 @@ function Storybooks() {
       if (response?.success === false) {
         throw new Error(response?.message || 'Failed to regenerate storybook PDF');
       }
+      const pdfAsset = response?.data;
+      if (pdfAsset && Array.isArray(pdfAsset.pages)) {
+        const snapshot = JSON.parse(JSON.stringify(pdfAsset));
+        snapshot.jobId =
+          snapshot.jobId || snapshot.storybookJobId || snapshot.storybookJobID || jobIdentifier;
+
+        const mergedPages = mergePdfAndJobPages(
+          Array.isArray(snapshot.pages) ? snapshot.pages : [],
+          []
+        );
+
+        setActiveAsset(snapshot);
+        setActiveAssetPages(normaliseAssetPages(mergedPages));
+
+        setStorybookJobs((previous) =>
+          previous.map((job) =>
+            job._id === jobIdentifier ? { ...job, pdfAsset: snapshot } : job
+          )
+        );
+      }
       toast.success('Storybook PDF regenerated successfully.');
     } catch (error) {
       toast.error(`Failed to regenerate PDF: ${error.message}`);
@@ -2954,8 +3017,35 @@ function Storybooks() {
       await bookAPI.applyStorybookCandidate(selectedBookId, jobIdentifier, order, {
         candidateIndex,
       });
-      // No optimistic UI mutation here; wait for SSE + merged pages
-      // to bring in the updated selection from the backend.
+
+      // Optimistically update the selected candidate locally so the
+      // UI reflects the change immediately while SSE/job updates arrive.
+      setActiveAssetPages((previousPages) => {
+        if (!Array.isArray(previousPages) || !previousPages.length) return previousPages;
+
+        const normalisedOrder =
+          order === 'cover'
+            ? 1
+            : order === 'dedication'
+            ? 2
+            : Number(order);
+
+        if (!Number.isFinite(normalisedOrder)) return previousPages;
+
+        return previousPages.map((page) => {
+          const pageOrder = Number.isFinite(page.order)
+            ? Number(page.order)
+            : getDisplayPageNumber(page.pageType, page.order);
+
+          if (pageOrder !== normalisedOrder) return page;
+
+          return {
+            ...page,
+            selectedCandidateIndex: candidateIndex,
+          };
+        });
+      });
+
       toast.success('Candidate applied. Regenerate PDF when you are ready.');
     } catch (error) {
       toast.error(`Failed to apply candidate: ${error.message}`);
