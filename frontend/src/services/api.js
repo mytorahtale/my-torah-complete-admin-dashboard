@@ -69,6 +69,8 @@ export const bookAPI = {
     }),
   regenerateStorybookPdf: (bookId, jobId) =>
     api.post(`/books/${bookId}/storybooks/jobs/${jobId}/regenerate-pdf`),
+  deleteStorybookJob: (bookId, jobId) =>
+    api.delete(`/books/${bookId}/storybooks/jobs/${jobId}`),
   confirmStorybook: (bookId, jobId) =>
     api.post(`/books/${bookId}/storybooks/jobs/${jobId}/confirm`),
   getConfirmedStorybooks: (bookId) => api.get(`/books/${bookId}/storybooks/confirmed`),

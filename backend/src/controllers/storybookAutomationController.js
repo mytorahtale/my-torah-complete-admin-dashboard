@@ -9,7 +9,8 @@ const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
 const { applyCandidateSelection } = require('../services/storybookCandidateService');
 const StorybookJob = require('../models/StorybookJob');
 const ConfirmedStorybook = require('../models/ConfirmedStorybook');
-const { downloadFromS3, uploadBufferToS3 } = require('../config/s3');
+const { downloadFromS3, uploadBufferToS3, deleteFromS3 } = require('../config/s3');
+const Generation = require('../models/Generation');
 const { splitStorybookPdf } = require('../utils/pdfGenerator');
 
 const isValidObjectId = (value) => {
@@ -209,6 +210,105 @@ exports.regeneratePdf = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to regenerate storybook PDF',
+    });
+  }
+};
+
+exports.deleteJob = async (req, res) => {
+  try {
+    const { id: bookId, jobId } = req.params;
+
+    if (!isValidObjectId(bookId) || !isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid book or job ID',
+      });
+    }
+
+    const job = await StorybookJob.findById(jobId);
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: 'Storybook job not found',
+      });
+    }
+
+    if (String(job.bookId) !== String(bookId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Storybook job does not belong to this book',
+      });
+    }
+
+    const keysToDelete = new Set();
+
+    const collectAssetKey = (asset) => {
+      if (asset && asset.key && typeof asset.key === 'string') {
+        keysToDelete.add(asset.key);
+      }
+    };
+
+    const collectAssetListKeys = (assets) => {
+      if (!Array.isArray(assets)) return;
+      assets.forEach((asset) => collectAssetKey(asset));
+    };
+
+    if (Array.isArray(job.pages)) {
+      job.pages.forEach((page) => {
+        collectAssetKey(page.characterAsset);
+        collectAssetKey(page.characterAssetOriginal);
+        collectAssetListKeys(page.candidateAssets);
+      });
+    }
+
+    if (job.pdfAsset) {
+      collectAssetKey(job.pdfAsset);
+      if (Array.isArray(job.pdfAsset.pages)) {
+        job.pdfAsset.pages.forEach((pdfPage) => {
+          collectAssetKey(pdfPage.background);
+          collectAssetKey(pdfPage.character);
+          collectAssetKey(pdfPage.renderedImage);
+        });
+      }
+    }
+
+    // Any confirmed storybooks that point to this job should also be removed,
+    // including their split PDF assets.
+    const confirmedList = await ConfirmedStorybook.find({
+      bookId,
+      storybookJobId: jobId,
+    }).lean();
+    confirmedList.forEach((item) => {
+      if (item.pdfKey) {
+        keysToDelete.add(item.pdfKey);
+      }
+    });
+
+    await Promise.all([
+      StorybookJob.deleteOne({ _id: jobId }),
+      Generation.deleteMany({ 'storybookContext.jobId': jobId }),
+      ConfirmedStorybook.deleteMany({ bookId, storybookJobId: jobId }),
+    ]);
+
+    if (keysToDelete.size > 0) {
+      await Promise.all(
+        Array.from(keysToDelete).map((key) =>
+          deleteFromS3(key).catch((error) =>
+            console.warn(`⚠️  Failed to cleanup S3 asset ${key}: ${error.message}`)
+          )
+        )
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Storybook run deleted successfully',
+    });
+  } catch (error) {
+    console.error('Error deleting storybook job:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to delete storybook job',
     });
   }
 };
