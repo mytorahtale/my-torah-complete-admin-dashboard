@@ -3,6 +3,7 @@ const Book = require('../models/Book');
 const StorybookJob = require('../models/StorybookJob');
 const { downloadFromS3, uploadBufferToS3, generateBookCharacterOverlayKey, getSignedUrlForKey } = require('../config/s3');
 const { rebuildPdfForJob } = require('./storybookWorkflow');
+const { removeBackground } = require('../utils/pdfGenerator');
 
 const createEvent = (type, message, metadata = null) => ({
   type,
@@ -66,10 +67,64 @@ async function applyCandidateSelection({ jobId, pageToken, candidateIndex }) {
     candidate.originalName || `character-${page.order || 0}.png`
   );
 
-  const uploadMeta = await uploadBufferToS3(
+  // Step 1: Upload original buffer to S3 first (needed for Brio to access)
+  const initialUpload = await uploadBufferToS3(
     originalBuffer,
     targetKey,
     candidate.contentType || 'image/png',
+    { acl: 'public-read' }
+  );
+
+  // Step 2: Handle background removal based on page type
+  // - Dedication pages: KEEP the background (skip removal)
+  // - Cover and story pages: REMOVE the background
+  let finalBuffer = originalBuffer;
+  let backgroundRemoved = Boolean(candidate.backgroundRemoved);
+
+  if (page.pageType === 'dedication') {
+    // Dedication page - keep the background as-is
+    console.log('[applyCandidateSelection] Dedication page - skipping background removal');
+    finalBuffer = originalBuffer;
+    backgroundRemoved = false;
+  } else if (candidate.backgroundRemoved) {
+    // Already has background removed
+    console.log('[applyCandidateSelection] Candidate already has background removed');
+    finalBuffer = originalBuffer;
+    backgroundRemoved = true;
+  } else {
+    // Cover and story pages - remove background using Brio
+    console.log('[applyCandidateSelection] Removing background for', page.pageType || 'story', 'page');
+    try {
+      const signedUrlForBrio = await getSignedUrlForKey(targetKey).catch(() => initialUpload.url);
+      const removalBuffer = await removeBackground({
+        url: initialUpload.url,
+        signedUrl: signedUrlForBrio,
+        downloadUrl: initialUpload.url,
+        key: targetKey,
+      });
+
+      if (removalBuffer && removalBuffer.length) {
+        console.log('[applyCandidateSelection] Background removal successful, buffer length:', removalBuffer.length);
+        finalBuffer = removalBuffer;
+        backgroundRemoved = true;
+      } else {
+        console.warn('[applyCandidateSelection] Brio returned empty buffer, using original');
+        finalBuffer = originalBuffer;
+        backgroundRemoved = false;
+      }
+    } catch (error) {
+      console.warn('[applyCandidateSelection] Background removal failed:', error.message);
+      finalBuffer = originalBuffer;
+      backgroundRemoved = false;
+    }
+  }
+
+  // Step 3: Upload the final buffer (with or without background removed)
+  const contentType = backgroundRemoved ? 'image/png' : (candidate.contentType || 'image/png');
+  const uploadMeta = await uploadBufferToS3(
+    finalBuffer,
+    targetKey,
+    contentType,
     { acl: 'public-read' }
   );
 
@@ -80,11 +135,11 @@ async function applyCandidateSelection({ jobId, pageToken, candidateIndex }) {
     url: uploadMeta.url,
     downloadUrl: uploadMeta.url,
     signedUrl,
-    size: originalBuffer.length,
-    contentType: candidate.contentType || 'image/png',
+    size: finalBuffer.length,
+    contentType,
     uploadedAt: new Date(),
     originalName: candidate.originalName || `character-${page.order || 0}.png`,
-    backgroundRemoved: Boolean(candidate.backgroundRemoved),
+    backgroundRemoved,
   };
 
   page.characterAsset = characterAsset;

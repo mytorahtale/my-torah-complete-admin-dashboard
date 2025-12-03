@@ -59,6 +59,7 @@ router.get('/storybooks/stream/live', storybookAutomationController.streamJobs);
 router.get('/:id/storybooks/jobs', storybookAutomationController.listJobs);
 router.get('/:id/storybooks/jobs/:jobId', storybookAutomationController.getJob);
 router.post('/:id/storybooks/jobs/:jobId/candidates', storybookAutomationController.applyCandidate);
+router.post('/:id/storybooks/jobs/:jobId/rebuild-pdf', storybookAutomationController.rebuildPdf);
 router.post('/:id/storybooks/auto', storybookAutomationController.startAutomation);
 router.post('/:id/duplicate', bookController.duplicateBook);
 router.get('/:id/editable', bookController.getBookForEdit);

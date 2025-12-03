@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { startStorybookAutomation, getStorybookJobById, listStorybookJobsForBook } = require('../services/storybookWorkflow');
+const { startStorybookAutomation, getStorybookJobById, listStorybookJobsForBook, rebuildPdfForJob } = require('../services/storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
 const { applyCandidateSelection } = require('../services/storybookCandidateService');
 
@@ -173,6 +173,44 @@ exports.applyCandidate = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to apply storybook candidate',
+    });
+  }
+};
+
+exports.rebuildPdf = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    if (!isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid job ID',
+      });
+    }
+
+    const job = await getStorybookJobById(jobId);
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: 'Storybook job not found',
+      });
+    }
+
+    // Rebuild the PDF with current candidate selections
+    await rebuildPdfForJob(jobId);
+
+    // Fetch the updated job to return fresh data
+    const updatedJob = await getStorybookJobById(jobId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'PDF rebuilt successfully',
+      data: updatedJob,
+    });
+  } catch (error) {
+    console.error('Error rebuilding storybook PDF:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to rebuild storybook PDF',
     });
   }
 };

@@ -1407,10 +1407,13 @@ const rebuildPdfForJob = async (jobId) => {
     .slice()
     .sort((a, b) => (a.order || 0) - (b.order || 0))
     .map((bookPage) => {
+      // IMPORTANT: Match by pageId first (primary key), NOT by order
+      // Order comparison doesn't work because book pages have orders 1,2,3...
+      // but job pages for stories have orders 3,4,5... (after cover=1, dedication=2)
       const jobPage = refreshedJob.pages.find(
         (entry) =>
-          (entry.pageId && entry.pageId.toString() === bookPage._id.toString()) ||
-          entry.order === bookPage.order
+          entry.pageId && bookPage._id &&
+          entry.pageId.toString() === bookPage._id.toString()
       );
       return {
         bookPage,
@@ -1591,10 +1594,12 @@ const processStorybookJob = async (jobId) => {
   const storyPages = refreshedBook.pages
     .sort((a, b) => (a.order || 0) - (b.order || 0))
     .map((bookPage) => {
+      // Match by pageId (primary key) - order comparison doesn't work correctly
+      // because book pages and job pages have different order numbering
       const jobPage = refreshedJob.pages.find(
         (entry) =>
-          (entry.pageId && entry.pageId.toString() === bookPage._id.toString()) ||
-          entry.order === bookPage.order
+          entry.pageId && bookPage._id &&
+          entry.pageId.toString() === bookPage._id.toString()
       );
       return {
         bookPage,

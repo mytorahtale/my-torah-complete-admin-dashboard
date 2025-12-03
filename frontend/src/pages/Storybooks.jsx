@@ -58,6 +58,9 @@ const getCoverAssetsBaseUrl = () => {
   return apiUrl.replace(/\/?api\/?$/, '');
 };
 
+// Font family with fallbacks in case CanvaSans doesn't load
+const COVER_FONT_FAMILY = '"CanvaSans", "Segoe UI", Helvetica, Arial, sans-serif';
+
 const ensureCoverFonts = (() => {
   let loadingPromise = null;
   return () => {
@@ -254,35 +257,60 @@ const resolveCoverText = ({ cover = {}, bodyFallback = '', readerName = '' }) =>
   };
 };
 
-const loadImageElement = (src) =>
+const getProxiedImageUrl = (src) => {
+  if (!src) return src;
+  // Check if this is an S3 URL that needs proxying
+  const isS3 = src.includes('.s3.') || src.includes('s3.amazonaws.com');
+  if (isS3) {
+    // Use our backend proxy to avoid CORS issues
+    return `${API_BASE_URL}/image-proxy?url=${encodeURIComponent(src)}`;
+  }
+  return src;
+};
+
+const loadImageElement = (src, useProxy = true) =>
   new Promise((resolve, reject) => {
     if (!src) {
       reject(new Error('Missing image source'));
       return;
     }
 
+    let attemptedProxy = false;
     let attemptedWithoutCors = false;
 
-    const attemptLoad = () => {
+    const attemptLoad = (url) => {
       const image = new Image();
-      if (!attemptedWithoutCors) {
-        image.crossOrigin = 'anonymous';
-      }
+      image.crossOrigin = 'anonymous';
 
       image.onload = () => resolve(image);
       image.onerror = () => {
+        // First try: use proxy for S3 URLs
+        if (useProxy && !attemptedProxy) {
+          attemptedProxy = true;
+          const proxiedUrl = getProxiedImageUrl(src);
+          if (proxiedUrl !== src) {
+            console.warn(`[loadImageElement] Direct load failed, trying proxy for ${src}`);
+            attemptLoad(proxiedUrl);
+            return;
+          }
+        }
+        // Second try: without CORS attribute
         if (!attemptedWithoutCors) {
           attemptedWithoutCors = true;
-          console.warn(`[loadImageElement] Cross-origin load failed for ${src}, retrying without CORS`);
-          attemptLoad();
+          console.warn(`[loadImageElement] Proxy failed, trying without CORS for ${src}`);
+          const fallbackImage = new Image();
+          fallbackImage.onload = () => resolve(fallbackImage);
+          fallbackImage.onerror = () => reject(new Error(`Failed to load image ${src}`));
+          fallbackImage.src = src;
           return;
         }
         reject(new Error(`Failed to load image ${src}`));
       };
-      image.src = src;
+      image.src = url;
     };
 
-    attemptLoad();
+    // Start with the original URL (with CORS)
+    attemptLoad(src);
   });
 
 const coverDrawRoundedRect = (ctx, x, y, width, height, radius) => {
@@ -403,7 +431,7 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
     segments.push({
       type: 'text',
       text: resolvedHeadline,
-      font: '600 100px "CanvaSans"',
+      font: `600 100px ${COVER_FONT_FAMILY}`,
       lineHeight: 1.08,
       color: 'rgba(255,255,255,0.96)',
     });
@@ -413,7 +441,7 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
     segments.push({
       type: 'text',
       text: resolvedBody,
-      font: '400 70px "CanvaSans"',
+      font: `400 70px ${COVER_FONT_FAMILY}`,
       lineHeight: 1.45,
       color: 'rgba(255,255,255,0.92)',
     });
@@ -424,7 +452,7 @@ Packed with wonder, learning, and heart, ${safeChildName}'s Trip to Israel is th
     segments.push({
       type: 'text',
       text: resolvedFooter,
-      font: '700 60px "CanvaSans"',
+      font: `700 60px ${COVER_FONT_FAMILY}`,
       lineHeight: 1.1,
       color: 'rgba(255,255,255,0.94)',
     });
@@ -451,7 +479,7 @@ const coverLayoutText = (ctx, segments, startX, startY, maxWidth) => {
       return;
     }
     if (segment.type === 'text') {
-      const font = segment.font || '30px "CanvaSans"';
+      const font = segment.font || `30px ${COVER_FONT_FAMILY}`;
       const lineHeight = segment.lineHeight || 1.3;
       const color = segment.color;
       segment.text.split(/\r?\n/).forEach((rawLine) => {
@@ -481,7 +509,7 @@ const coverLayoutLines = (ctx, lines, startX, startY) => {
     if (line.type === 'text') {
       const fontSize = coverGetFontSize(line.font);
       const leading = line.lineHeight || 1.3;
-      ctx.font = line.font || '30px "CanvaSans"';
+      ctx.font = line.font || `30px ${COVER_FONT_FAMILY}`;
       const measuredWidth = ctx.measureText(line.text).width;
       cursorY += fontSize;
       positioned.push({ ...line, x: startX, y: cursorY, width: measuredWidth });
@@ -526,7 +554,7 @@ const coverDrawHero = (ctx, childName, width, height, overrides = {}) => {
   topGradient.addColorStop(0.7, '#FFB300');
   topGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 280px "CanvaSans"';
+  ctx.font = `700 280px ${COVER_FONT_FAMILY}`;
   ctx.strokeStyle = '#1565C0';
   ctx.lineWidth = 35;
   ctx.strokeText(topLine, textX, topY);
@@ -539,7 +567,7 @@ const coverDrawHero = (ctx, childName, width, height, overrides = {}) => {
   bottomGradient.addColorStop(0.7, '#FFB300');
   bottomGradient.addColorStop(1, '#FF9800');
 
-  ctx.font = '700 200px "CanvaSans"';
+  ctx.font = `700 200px ${COVER_FONT_FAMILY}`;
   ctx.strokeStyle = '#1565C0';
   ctx.lineWidth = 28;
   ctx.strokeText(bottomLine, textX, bottomY);
@@ -568,7 +596,7 @@ const fitDedicationFontSize = (ctx, lines, { target, min, maxWidth, weight }) =>
   let size = Math.max(Math.round(target), Math.round(min));
 
   while (size > min) {
-    ctx.font = `${weight} ${size}px "CanvaSans"`;
+    ctx.font = `${weight} ${size}px ${COVER_FONT_FAMILY}`;
     const isTooWide = lines.some((line) => ctx.measureText(line).width > safeMaxWidth);
     if (!isTooWide) {
       return size;
@@ -577,11 +605,11 @@ const fitDedicationFontSize = (ctx, lines, { target, min, maxWidth, weight }) =>
   }
 
   size = Math.max(Math.round(min), 20);
-  ctx.font = `${weight} ${size}px "CanvaSans"`;
+  ctx.font = `${weight} ${size}px ${COVER_FONT_FAMILY}`;
   let stillTooWide = lines.some((line) => ctx.measureText(line).width > safeMaxWidth);
   while (stillTooWide && size > 20) {
     size -= Math.max(1, Math.round(size * 0.05));
-    ctx.font = `${weight} ${size}px "CanvaSans"`;
+    ctx.font = `${weight} ${size}px ${COVER_FONT_FAMILY}`;
     stillTooWide = lines.some((line) => ctx.measureText(line).width > safeMaxWidth);
   }
 
@@ -664,7 +692,7 @@ const renderDedicationTextBlock = (ctx, { area, bigText, smallText }) => {
   if (primaryLines.length && titleFontSize) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.font = `700 ${Math.round(titleFontSize)}px "CanvaSans"`;
+    ctx.font = `700 ${Math.round(titleFontSize)}px ${COVER_FONT_FAMILY}`;
     primaryLines.forEach((line, index) => {
       cursorY += titleLineHeight;
       ctx.fillText(line, centerX, cursorY);
@@ -680,7 +708,7 @@ const renderDedicationTextBlock = (ctx, { area, bigText, smallText }) => {
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.font = `400 ${Math.round(subtitleFontSize)}px "CanvaSans"`;
+    ctx.font = `400 ${Math.round(subtitleFontSize)}px ${COVER_FONT_FAMILY}`;
     secondaryLines.forEach((line, index) => {
       cursorY += subtitleLineHeight;
       ctx.fillText(line, leftX, cursorY);
@@ -850,47 +878,60 @@ const renderCoverPreview = async (canvas, model, signal) => {
   blurX = effectiveBlurX;
 
   if (blurHeight > 0 && blurWidth > 0) {
-    const scale = 0.5;
-    const tempWidth = Math.max(1, Math.floor(blurWidth * scale));
-    const tempHeight = Math.max(1, Math.floor(blurHeight * scale));
-    const blurCanvas = document.createElement('canvas');
-    blurCanvas.width = tempWidth;
-    blurCanvas.height = tempHeight;
-    const blurCtx = blurCanvas.getContext('2d');
-
-    if (backgroundImage) {
-      blurCtx.drawImage(
-        backgroundImage,
-        blurX,
-        blurY,
-        blurWidth,
-        blurHeight,
-        0,
-        0,
-        tempWidth,
-        tempHeight
-      );
-    } else {
-      blurCtx.fillStyle = 'rgba(12, 32, 78, 0.85)';
-      blurCtx.fillRect(0, 0, tempWidth, tempHeight);
-    }
-
-    const imageData = blurCtx.getImageData(0, 0, tempWidth, tempHeight);
-    for (let i = 0; i < 8; i += 1) {
-      coverBoxBlur(imageData, tempWidth, tempHeight, 15);
-    }
-    blurCtx.putImageData(imageData, 0, 0);
-
-    ctx.save();
     const overlayRadius = 20;
-    coverDrawRoundedRect(ctx, blurX, blurY, blurWidth, blurHeight, overlayRadius);
-    ctx.clip();
-    ctx.drawImage(blurCanvas, blurX, blurY, blurWidth, blurHeight);
+    let blurApplied = false;
 
+    // Try to apply blur effect - may fail due to CORS (tainted canvas)
+    try {
+      const scale = 0.5;
+      const tempWidth = Math.max(1, Math.floor(blurWidth * scale));
+      const tempHeight = Math.max(1, Math.floor(blurHeight * scale));
+      const blurCanvas = document.createElement('canvas');
+      blurCanvas.width = tempWidth;
+      blurCanvas.height = tempHeight;
+      const blurCtx = blurCanvas.getContext('2d');
+
+      if (backgroundImage) {
+        blurCtx.drawImage(
+          backgroundImage,
+          blurX,
+          blurY,
+          blurWidth,
+          blurHeight,
+          0,
+          0,
+          tempWidth,
+          tempHeight
+        );
+      } else {
+        blurCtx.fillStyle = 'rgba(12, 32, 78, 0.85)';
+        blurCtx.fillRect(0, 0, tempWidth, tempHeight);
+      }
+
+      // This may throw SecurityError if canvas is tainted by cross-origin image
+      const imageData = blurCtx.getImageData(0, 0, tempWidth, tempHeight);
+      for (let i = 0; i < 8; i += 1) {
+        coverBoxBlur(imageData, tempWidth, tempHeight, 15);
+      }
+      blurCtx.putImageData(imageData, 0, 0);
+
+      ctx.save();
+      coverDrawRoundedRect(ctx, blurX, blurY, blurWidth, blurHeight, overlayRadius);
+      ctx.clip();
+      ctx.drawImage(blurCanvas, blurX, blurY, blurWidth, blurHeight);
+      ctx.restore();
+      blurApplied = true;
+    } catch (blurError) {
+      // CORS security error - fallback to simple semi-transparent overlay
+      console.warn('[coverPreview] Blur failed (CORS), using fallback overlay');
+    }
+
+    // Always draw the dark overlay on top
+    ctx.save();
     coverDrawRoundedRect(ctx, blurX, blurY, blurWidth, blurHeight, overlayRadius);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    // Use darker overlay if blur didn't apply to maintain readability
+    ctx.fillStyle = blurApplied ? 'rgba(0, 0, 0, 0.35)' : 'rgba(12, 32, 78, 0.75)';
     ctx.fill();
-
     ctx.restore();
   }
 
@@ -1071,22 +1112,9 @@ const CoverPagePreview = React.memo(({ model, className = '' }) => {
   const canvasRef = useRef(null);
   const [error, setError] = useState(null);
 
-  if (model.renderedImageSrc) {
-    // Backend generates 842x421 images (PDF page size without margins)
-    // Container matches PDF aspect ratio
-    // Use 'fill' to show complete image without cropping or blank areas
-    return (
-      <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
-        <img
-          src={model.renderedImageSrc}
-          alt="Cover page preview"
-          className="w-full h-full"
-          style={{ objectFit: 'fill', display: 'block' }}
-        />
-      </div>
-    );
-  }
-
+  // IMPORTANT: All hooks must be called before any conditional returns
+  // NOTE: We skip using renderedImageSrc to always composite live (background + character)
+  // This ensures the preview shows the current character with proper transparency
   useEffect(() => {
     let cancelled = false;
     const signal = { cancelled: false };
@@ -1120,6 +1148,7 @@ const CoverPagePreview = React.memo(({ model, className = '' }) => {
     model.bodyText,
   ]);
 
+  // Now we can have conditional returns after all hooks
   if (error) {
     return (
       <div className={`flex h-full w-full items-center justify-center bg-muted text-xs ${className}`}>
@@ -1141,18 +1170,10 @@ const DedicationPagePreview = React.memo(({ model, className = '' }) => {
   const canvasRef = useRef(null);
   const [error, setError] = useState(null);
 
-  if (model?.renderedImageSrc) {
-    return (
-      <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
-        <img
-          src={model.renderedImageSrc}
-          alt="Dedication page preview"
-          className="h-full w-full object-cover"
-        />
-      </div>
-    );
-  }
-
+  // IMPORTANT: All hooks must be called before any conditional returns
+  // NOTE: We skip using renderedImageSrc to always composite live (background + character)
+  // This ensures the preview updates when a new character is selected
+  // For dedication pages, character keeps its background (no transparency needed)
   useEffect(() => {
     let cancelled = false;
     const signal = { cancelled: false };
@@ -1182,6 +1203,7 @@ const DedicationPagePreview = React.memo(({ model, className = '' }) => {
     model?.dedicationPage?.secondTitle,
   ]);
 
+  // Now we can have conditional returns after all hooks
   if (error) {
     return (
       <div className={`flex h-full w-full items-center justify-center bg-muted text-xs ${className}`}>
@@ -1278,7 +1300,8 @@ const buildPagePreviewModel = ({
   if (pageType === 'cover') {
     const coverPage = page.coverPage || {};
     const backgroundAsset = coverPage.backgroundImage || null;
-    const characterAsset = coverPage.characterImage || null;
+    // Check for character in multiple locations: page level (from backend) or nested in coverPage
+    const characterAsset = page.character || page.characterAsset || coverPage.characterImage || null;
     const qrAsset = coverPage.qrCode || null;
 
     const backgroundSrc = withCacheBust(
@@ -1349,7 +1372,8 @@ const buildPagePreviewModel = ({
   if (pageType === 'dedication') {
     const dedicationPage = page.dedicationPage || {};
     const backgroundAsset = dedicationPage.backgroundImage || null;
-    const kidAsset = dedicationPage.generatedImage || dedicationPage.kidImage || null;
+    // Check for character in multiple locations: page level (from backend) or nested in dedicationPage
+    const kidAsset = page.character || page.characterAsset || dedicationPage.generatedImage || dedicationPage.kidImage || null;
 
     const backgroundSrc = withCacheBust(
       resolveAssetUrl(backgroundAsset),
@@ -1482,6 +1506,12 @@ const buildPagePreviewModel = ({
 
 const StorybookPageSvg = React.memo(
   ({ model, className = '' }) => {
+    // IMPORTANT: All hooks must be called before any conditional returns
+    const pageLabel = model?.pageLabel || '';
+    const blurId = React.useMemo(() => `storybook-blur-${pageLabel}`, [pageLabel]);
+    const maskId = React.useMemo(() => `storybook-mask-${pageLabel}`, [pageLabel]);
+
+    // Now we can have conditional returns after all hooks
     if (!model) return null;
 
     if (model.pageType === 'cover') {
@@ -1491,23 +1521,14 @@ const StorybookPageSvg = React.memo(
       return <DedicationPagePreview model={model} className={className} />;
     }
 
-    if (model.renderedImageSrc) {
-      return (
-        <div className={['h-full w-full overflow-hidden', className].filter(Boolean).join(' ')}>
-          <img
-            src={model.renderedImageSrc}
-            alt={`Story page ${model.pageLabel}`}
-            className="h-full w-full object-cover"
-          />
-        </div>
-      );
-    }
+    // NOTE: We skip using renderedImageSrc for story pages to ensure the preview
+    // always shows the CURRENT character (with proper transparency).
+    // renderedImage is a pre-rendered PNG that might be stale after character selection.
+    // By compositing background + character live, the preview stays up-to-date.
 
-    const { backgroundSrc, characterSrc, characterFrame, pageLabel, text, hebrew } = model;
+    const { backgroundSrc, characterSrc, characterFrame, text, hebrew } = model;
     const hasTextOverlay = Boolean(text?.lines?.length && text.overlay);
     const hasHebrew = Boolean(hebrew?.lines?.length);
-    const blurId = React.useMemo(() => `storybook-blur-${pageLabel}`, [pageLabel]);
-    const maskId = React.useMemo(() => `storybook-mask-${pageLabel}`, [pageLabel]);
     const svgClasses = ['h-full', 'w-full', className].filter(Boolean).join(' ');
     const toSvgY = (pdfY) => PDF_PAGE_HEIGHT - pdfY;
 
@@ -1850,15 +1871,21 @@ const normaliseAssetPages = (pages) => {
           : pageType === 'dedication' && typeof entry?.dedicationPage?.prompt === 'string'
           ? entry.dedicationPage.prompt
           : entry?.text || '';
+     // Map characterAsset (backend) to character (frontend) if not already present
+     const characterSource = entry?.character || entry?.characterAsset || null;
+     const characterOriginalSource = entry?.characterOriginal || entry?.characterAssetOriginal || null;
+     // Map backgroundImage to background if needed
+     const backgroundSource = entry?.background || entry?.backgroundImage || null;
+
      return {
        ...entry,
        pageType,
        cover,
        coverPage,
        dedicationPage,
-       background: entry?.background ? { ...entry.background } : null,
-       character: entry?.character ? { ...entry.character } : null,
-       characterOriginal: entry?.characterOriginal ? { ...entry.characterOriginal } : null,
+       background: backgroundSource ? { ...backgroundSource } : null,
+       character: characterSource ? { ...characterSource } : null,
+       characterOriginal: characterOriginalSource ? { ...characterOriginalSource } : null,
        candidateAssets: candidateAssetsSource.map((asset) => ({ ...asset })),
        selectedCandidateIndex: selectedCandidateIndexSource,
        generationId: entry?.generationId || null,
@@ -2812,7 +2839,7 @@ function Storybooks() {
     }
 
     const jobIdentifier =
-      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || null;
+      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || activeAsset._id || null;
 
     if (!jobIdentifier) {
       toast.error('Missing storybook job identifier for PDF regeneration');
@@ -2823,12 +2850,71 @@ function Storybooks() {
 
     setIsRegeneratingPdf(true);
     try {
-      const response = await bookAPI.getStorybookJob(selectedBookId, jobIdentifier);
+      // Call the dedicated rebuild-pdf endpoint which waits for PDF to be built
+      // Note: axios interceptor returns response.data directly
+      const response = await bookAPI.rebuildStorybookPdf(selectedBookId, jobIdentifier);
+
+      // Response structure is { success: true, data: {...job}, message: '...' } after interceptor
       if (response?.success === false) {
-        throw new Error(response?.message || 'Failed to trigger PDF regeneration');
+        throw new Error(response?.message || 'Failed to regenerate PDF');
       }
-      toast.success('Regenerating storybook PDF with current selections…');
+
+      const updatedJob = response?.data;
+
+      if (updatedJob) {
+        // Create a new timestamp to bust cache for all images
+        const refreshTimestamp = Date.now();
+        const newUpdatedAt = new Date().toISOString();
+
+        // IMPORTANT: pdfAsset.pages has the complete data (background, character, etc.)
+        // job.pages only has generation info (characterAsset, no background)
+        const pdfPages = updatedJob.pdfAsset?.pages || [];
+        const jobPages = updatedJob.pages || [];
+
+        // Merge pdfAsset.pages with job.pages to get complete data
+        // job.pages has the source of truth for character selections
+        const mergedPages = pdfPages.map((pdfPage) => {
+          const matchingJobPage = jobPages.find((jp) => jp.order === pdfPage.order);
+          // Prioritize job page's character (source of truth) over pdfPage character
+          const newCharacter = matchingJobPage?.characterAsset || pdfPage.character;
+          return {
+            ...pdfPage,
+            candidateAssets: matchingJobPage?.candidateAssets || pdfPage.candidateAssets || [],
+            selectedCandidateIndex: matchingJobPage?.selectedCandidateIndex ?? pdfPage.selectedCandidateIndex,
+            characterAsset: matchingJobPage?.characterAsset || pdfPage.characterAsset,
+            character: newCharacter,
+            updatedAt: newUpdatedAt,
+          };
+        });
+
+        const pagesSource = mergedPages.length > 0 ? mergedPages : jobPages.map((page) => ({
+          ...page,
+          updatedAt: newUpdatedAt,
+        }));
+
+        // Normalize the pages
+        const normalizedPages = normaliseAssetPages(pagesSource);
+
+        // Update active asset with refreshed data
+        setActiveAsset((prev) => ({
+          ...prev,
+          ...updatedJob,
+          pages: pagesSource,
+          pdfAsset: updatedJob.pdfAsset || prev?.pdfAsset,
+          updatedAt: newUpdatedAt,
+          _refreshTimestamp: refreshTimestamp,
+        }));
+
+        // Update active asset pages with normalized data
+        setActiveAssetPages(normalizedPages);
+
+        // Update storybookJobs to persist the changes when closing/reopening preview
+        setStorybookJobs((previous) => upsertJobList(previous, updatedJob));
+      }
+
+      toast.success('PDF regenerated successfully!');
     } catch (error) {
+      console.error('Failed to regenerate PDF:', error);
       toast.error(`Failed to regenerate PDF: ${error.message}`);
     } finally {
       setIsRegeneratingPdf(false);
@@ -2937,7 +3023,7 @@ function Storybooks() {
 
     // Use the underlying Storybook job identifier, not the pdfAsset _id
     const jobIdentifier =
-      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || null;
+      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || activeAsset._id || null;
 
     if (!jobIdentifier) {
       toast.error('Missing storybook job identifier for candidate selection');
@@ -2948,11 +3034,80 @@ function Storybooks() {
     setApplyingCandidateKey(selectionKey);
 
     try {
+      // Apply the candidate selection
       await bookAPI.applyStorybookCandidate(selectedBookId, jobIdentifier, order, {
         candidateIndex,
       });
-      toast.success('Candidate applied. PDF will update shortly.');
+
+      // Fetch the updated job data to refresh the UI with the new candidate selection
+      // Note: axios interceptor returns response.data directly, so response IS the data
+      const response = await bookAPI.getStorybookJob(selectedBookId, jobIdentifier);
+
+      // Response structure is { success: true, data: {...job} } after interceptor
+      const updatedJob = response?.data;
+
+      if (updatedJob) {
+        // Create a new timestamp to bust cache for all images
+        const refreshTimestamp = Date.now();
+        const newUpdatedAt = new Date().toISOString();
+
+        // IMPORTANT: pdfAsset.pages has the complete data (background, character, etc.)
+        // job.pages only has generation info (characterAsset, no background)
+        // So we MUST prefer pdfAsset.pages for display, merged with job.pages for candidate info
+        const pdfPages = updatedJob.pdfAsset?.pages || [];
+        const jobPages = updatedJob.pages || [];
+
+        // Merge pdfAsset.pages with job.pages to get complete data
+        // After applying a candidate, job.pages has the UPDATED characterAsset
+        // pdfAsset.pages should also be updated from rebuildPdfForJob, but to be safe
+        // we prioritize job.pages character data as the source of truth
+        const mergedPages = pdfPages.map((pdfPage) => {
+          const matchingJobPage = jobPages.find((jp) => jp.order === pdfPage.order);
+          // IMPORTANT: After candidate selection, matchingJobPage.characterAsset is the NEW character
+          // We must prioritize it over pdfPage.character which might be stale
+          const newCharacter = matchingJobPage?.characterAsset || pdfPage.character;
+          return {
+            ...pdfPage,
+            // Override with job page data for candidate selection
+            candidateAssets: matchingJobPage?.candidateAssets || pdfPage.candidateAssets || [],
+            selectedCandidateIndex: matchingJobPage?.selectedCandidateIndex ?? pdfPage.selectedCandidateIndex,
+            characterAsset: matchingJobPage?.characterAsset || pdfPage.characterAsset,
+            // Use the newly applied character from job.pages first, then fall back to pdfPage
+            character: newCharacter,
+            updatedAt: newUpdatedAt,
+          };
+        });
+
+        // Fallback to job pages if no pdf pages
+        const pagesSource = mergedPages.length > 0 ? mergedPages : jobPages.map((page) => ({
+          ...page,
+          updatedAt: newUpdatedAt,
+        }));
+
+        // Normalize the pages using the same function used when opening the viewer
+        const normalizedPages = normaliseAssetPages(pagesSource);
+
+        // Update active asset with refreshed data and new timestamp
+        setActiveAsset((prev) => ({
+          ...prev,
+          ...updatedJob,
+          pages: pagesSource,
+          pdfAsset: updatedJob.pdfAsset || prev?.pdfAsset,
+          updatedAt: newUpdatedAt, // Force cache bust
+          _refreshTimestamp: refreshTimestamp,
+        }));
+
+        // Update active asset pages with normalized data
+        setActiveAssetPages(normalizedPages);
+
+        // IMPORTANT: Also update storybookJobs so that closing and reopening
+        // the preview will show the updated character instead of stale data
+        setStorybookJobs((previous) => upsertJobList(previous, updatedJob));
+      }
+
+      toast.success('Candidate applied successfully!');
     } catch (error) {
+      console.error('Failed to apply candidate:', error);
       toast.error(`Failed to apply candidate: ${error.message}`);
     } finally {
       setApplyingCandidateKey('');
@@ -3144,14 +3299,18 @@ function Storybooks() {
                   type="button"
                   variant="default"
                   size="sm"
-                  className="gap-1 hidden md:flex"
+                  className={`gap-1 hidden md:flex ${
+                    isRegeneratingPdf
+                      ? 'bg-emerald-600 hover:bg-emerald-600 text-white'
+                      : ''
+                  }`}
                   onClick={handleRegeneratePdf}
                   disabled={isRegeneratingPdf}
                 >
                   {isRegeneratingPdf ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="hidden lg:inline">Rebuilding…</span>
+                      <span className="hidden lg:inline">Regenerating PDF…</span>
                     </>
                   ) : (
                     <>
@@ -3275,14 +3434,18 @@ function Storybooks() {
                         type="button"
                         variant="default"
                         size="sm"
-                        className="flex-1 gap-1"
+                        className={`flex-1 gap-1 ${
+                          isRegeneratingPdf
+                            ? 'bg-emerald-600 hover:bg-emerald-600 text-white'
+                            : ''
+                        }`}
                         onClick={handleRegeneratePdf}
                         disabled={isRegeneratingPdf}
                       >
                         {isRegeneratingPdf ? (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin" />
-                            Rebuilding…
+                            Regenerating PDF…
                           </>
                         ) : (
                           <>
@@ -3356,7 +3519,11 @@ function Storybooks() {
                                 type="button"
                                 size="sm"
                                 variant={isSelected ? 'outline' : 'default'}
-                                className="gap-1 h-8 text-xs"
+                                className={`gap-1 h-8 text-xs ${
+                                  isApplying
+                                    ? 'bg-emerald-600 hover:bg-emerald-600 text-white'
+                                    : ''
+                                }`}
                                 onClick={() =>
                                   handleApplyCandidate(orderToken, optionNumber)
                                 }

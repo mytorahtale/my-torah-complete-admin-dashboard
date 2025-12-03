@@ -29,8 +29,8 @@ app.use(cors({
 app.use(bodyParser.json({ limit: '25mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '25mb' }));
 
-// Static font assets for canvas rendering
-app.use('/fonts', express.static(path.join(__dirname, 'fonts')));
+// Static font assets for canvas rendering (fonts are in backend/fonts, not backend/src/fonts)
+app.use('/fonts', express.static(path.join(__dirname, '../fonts')));
 
 // Serve frontend static files
 const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
@@ -52,6 +52,46 @@ app.use('/api/evals', evalRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/automation', automationRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+
+// Image proxy endpoint for CORS bypass (allows frontend canvas operations)
+app.get('/api/image-proxy', async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url) {
+      return res.status(400).json({ success: false, message: 'URL parameter is required' });
+    }
+
+    // Only allow proxying from trusted S3 domains
+    const parsedUrl = new URL(url);
+    const allowedHosts = [
+      's3.amazonaws.com',
+      's3.us-east-1.amazonaws.com',
+      's3.us-west-2.amazonaws.com',
+    ];
+    const isS3 = parsedUrl.hostname.includes('.s3.') ||
+                 parsedUrl.hostname.includes('s3.amazonaws.com') ||
+                 allowedHosts.some(host => parsedUrl.hostname.includes(host));
+
+    if (!isS3) {
+      return res.status(403).json({ success: false, message: 'Only S3 URLs are allowed' });
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      return res.status(response.status).json({ success: false, message: 'Failed to fetch image' });
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(buffer);
+  } catch (error) {
+    console.error('[image-proxy] Error:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to proxy image' });
+  }
+});
 
 // Health check route
 app.get('/health', (req, res) => {
