@@ -67,6 +67,8 @@ export const bookAPI = {
       pageOrder,
       ...body,
     }),
+  regenerateStorybookPage: (bookId, jobId, pageOrder) =>
+    api.post(`/books/${bookId}/storybooks/jobs/${jobId}/pages/${pageOrder}/regenerate`),
   regenerateStorybookPdf: (bookId, jobId) =>
     api.post(`/books/${bookId}/storybooks/jobs/${jobId}/regenerate-pdf`),
   deleteStorybookJob: (bookId, jobId) =>

@@ -2857,9 +2857,12 @@ function Storybooks() {
 
   const handleRegeneratePage = async (order) => {
     if (!activeAsset || !selectedBookId || order === undefined || order === null) return;
-    const assetIdentifier = activeAsset._id || activeAsset.key;
-    if (!assetIdentifier) {
-      toast.error('Missing storybook identifier for regeneration');
+
+    const jobIdentifier =
+      activeAsset.jobId || activeAsset.storybookJobId || activeAsset.storybookJobID || null;
+
+    if (!jobIdentifier) {
+      toast.error('Missing storybook job identifier for regeneration');
       return;
     }
 
@@ -2870,9 +2873,50 @@ function Storybooks() {
       return;
     }
 
-    setRegeneratingOrder(order);
+    const pageOrder = Number(order);
+    if (!Number.isFinite(pageOrder) || pageOrder <= 0) {
+      toast.error('Invalid page selection for regeneration');
+      return;
+    }
+
+    if (regeneratingOrder === pageOrder) {
+      return;
+    }
+
+    setRegeneratingOrder(pageOrder);
     try {
-      throw new Error('Page regeneration via book assets has been disabled; rerun automation instead.');
+      const response = await bookAPI.regenerateStorybookPage(
+        selectedBookId,
+        jobIdentifier,
+        pageOrder
+      );
+      if (response?.success === false) {
+        throw new Error(response?.message || 'Failed to regenerate page');
+      }
+
+      const jobSnapshot = response?.data;
+      if (jobSnapshot) {
+        const pdfPages = Array.isArray(jobSnapshot.pdfAsset?.pages)
+          ? jobSnapshot.pdfAsset.pages
+          : Array.isArray(activeAsset?.pdfAsset?.pages)
+          ? activeAsset.pdfAsset.pages
+          : [];
+        const jobPages = Array.isArray(jobSnapshot.pages) ? jobSnapshot.pages : [];
+        const mergedPages = mergePdfAndJobPages(pdfPages, jobPages);
+
+        setActiveAsset((previous) => {
+          const next = { ...(previous || {}), jobId: jobSnapshot._id };
+          if (jobSnapshot.pdfAsset) {
+            next.pdfAsset = jobSnapshot.pdfAsset;
+          }
+          return next;
+        });
+
+        setActiveAssetPages(normaliseAssetPages(mergedPages));
+        setStorybookJobs((previous) => upsertJobList(previous, jobSnapshot));
+      }
+
+      toast.success('Page regenerated. Regenerate PDF to update the document.');
     } catch (error) {
       toast.error(`Failed to regenerate page: ${error.message}`);
     } finally {

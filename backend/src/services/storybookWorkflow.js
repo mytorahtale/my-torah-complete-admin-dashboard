@@ -7,6 +7,7 @@ const Generation = require('../models/Generation');
 const StorybookJob = require('../models/StorybookJob');
 const {
   uploadBufferToS3,
+  deleteFromS3,
   generateBookCharacterOverlayKey,
   generateBookPdfKey,
   getSignedUrlForKey,
@@ -1465,6 +1466,94 @@ const rebuildPdfForJob = async (jobId) => {
   return pdfAsset;
 };
 
+const regeneratePageForJob = async ({ jobId, pageOrder }) => {
+  const numericOrder = Number(pageOrder);
+  if (!Number.isFinite(numericOrder) || numericOrder <= 0) {
+    throw new Error('Invalid page order for regeneration');
+  }
+
+  const job = await StorybookJob.findById(jobId);
+  if (!job) {
+    throw new Error('Storybook job not found');
+  }
+
+  const page = job.pages.find((entry) => entry.order === numericOrder);
+  if (!page) {
+    throw new Error('Target page not found in storybook job');
+  }
+
+  const keysToDelete = new Set();
+
+  const collectAssetKey = (asset) => {
+    if (asset && asset.key && typeof asset.key === 'string') {
+      keysToDelete.add(asset.key);
+    }
+  };
+
+  const collectAssetListKeys = (assets) => {
+    if (!Array.isArray(assets)) return;
+    assets.forEach((asset) => collectAssetKey(asset));
+  };
+
+  // Clean up existing candidate options and their associated assets
+  collectAssetListKeys(page.candidateAssets);
+  collectAssetKey(page.characterAsset);
+  collectAssetKey(page.characterAssetOriginal);
+
+  if (keysToDelete.size > 0) {
+    await Promise.all(
+      Array.from(keysToDelete).map((key) =>
+        deleteFromS3(key).catch((error) =>
+          console.warn(
+            `⚠️  Failed to cleanup S3 asset ${key} during page regeneration: ${error.message}`
+          )
+        )
+      )
+    );
+  }
+
+  // Reset page fields so new generation fully replaces previous options
+  page.candidateAssets = [];
+  page.selectedCandidateIndex = null;
+  page.characterAsset = null;
+  page.characterAssetOriginal = null;
+  page.status = 'queued';
+  page.progress = 0;
+  page.error = null;
+  page.startedAt = null;
+  page.completedAt = null;
+
+  const book = await Book.findById(job.bookId);
+  if (!book) {
+    throw new Error('Book not found for storybook automation');
+  }
+
+  const training = await Training.findById(job.trainingId);
+  if (!training || training.status !== 'succeeded' || !training.modelVersion) {
+    throw new Error('Training must be successful with a model version');
+  }
+
+  const reader = job.readerId
+    ? await User.findById(job.readerId).select('name gender secondTitle')
+    : null;
+  const readerName = job.readerName || reader?.name || '';
+  const readerGender = job.readerGender || reader?.gender || '';
+
+  await processJobPage({
+    job,
+    page,
+    book,
+    training,
+    readerName,
+    readerGender,
+  });
+
+  const refreshedJob = await StorybookJob.findById(job._id);
+  const snapshot = await syncComputedFields(refreshedJob);
+  emitStorybookUpdate(snapshot);
+  return snapshot;
+};
+
 const processStorybookJob = async (jobId) => {
   const job = await StorybookJob.findById(jobId);
   if (!job) {
@@ -1873,4 +1962,5 @@ module.exports = {
   // a candidate image uses the same background‑removal and
   // book character slot pipeline as initial automation.
   copyAssetToBookCharacterSlot,
+  regeneratePageForJob,
 };

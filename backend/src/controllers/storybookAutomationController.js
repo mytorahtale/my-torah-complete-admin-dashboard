@@ -4,6 +4,7 @@ const {
   getStorybookJobById,
   listStorybookJobsForBook,
   rebuildPdfForJob,
+  regeneratePageForJob,
 } = require('../services/storybookWorkflow');
 const { subscribeToStorybookUpdates } = require('../services/storybookEvents');
 const { applyCandidateSelection } = require('../services/storybookCandidateService');
@@ -183,6 +184,67 @@ exports.applyCandidate = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to apply storybook candidate',
+    });
+  }
+};
+
+exports.regeneratePage = async (req, res) => {
+  try {
+    const { id: bookId, jobId, pageOrder } = req.params;
+
+    if (!isValidObjectId(bookId) || !isValidObjectId(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid book or job ID',
+      });
+    }
+
+    const job = await StorybookJob.findById(jobId);
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: 'Storybook job not found',
+      });
+    }
+
+    if (String(job.bookId) !== String(bookId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Storybook job does not belong to this book',
+      });
+    }
+
+    let resolvedOrder;
+    if (pageOrder === 'cover') {
+      resolvedOrder = 1;
+    } else if (pageOrder === 'dedication') {
+      resolvedOrder = 2;
+    } else {
+      const numericOrder = Number(pageOrder);
+      if (!Number.isFinite(numericOrder) || numericOrder <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid page order for regeneration',
+        });
+      }
+      resolvedOrder = numericOrder;
+    }
+
+    const snapshot = await regeneratePageForJob({
+      jobId: job._id,
+      pageOrder: resolvedOrder,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Storybook page regenerated successfully.',
+      data: snapshot,
+    });
+  } catch (error) {
+    console.error('Error regenerating storybook page:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to regenerate storybook page',
     });
   }
 };

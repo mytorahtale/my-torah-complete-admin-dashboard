@@ -59,6 +59,10 @@ router.get('/storybooks/stream/live', storybookAutomationController.streamJobs);
 router.get('/:id/storybooks/jobs', storybookAutomationController.listJobs);
 router.get('/:id/storybooks/jobs/:jobId', storybookAutomationController.getJob);
 router.post('/:id/storybooks/jobs/:jobId/candidates', storybookAutomationController.applyCandidate);
+router.post(
+  '/:id/storybooks/jobs/:jobId/pages/:pageOrder/regenerate',
+  storybookAutomationController.regeneratePage
+);
 router.post('/:id/storybooks/jobs/:jobId/regenerate-pdf', storybookAutomationController.regeneratePdf);
 router.delete('/:id/storybooks/jobs/:jobId', storybookAutomationController.deleteJob);
 router.post('/:id/storybooks/jobs/:jobId/confirm', storybookAutomationController.confirmPdfForJob);
