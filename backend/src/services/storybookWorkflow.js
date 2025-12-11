@@ -1920,12 +1920,33 @@ const getStorybookJobById = async (jobId) => {
   return emitJob(job);
 };
 
-const listStorybookJobsForBook = async (bookId, limit = 10, options = {}) => {
-  const { minimal = false } = options;
-  const jobs = await StorybookJob.find({ bookId })
-    .sort({ createdAt: -1 })
-    .limit(limit);
-  return jobs.map((job) => {
+const listStorybookJobsForBook = async (bookId, options = {}) => {
+  const {
+    limit = 10,
+    page = 1,
+    minimal = false,
+    status,
+  } = options;
+
+  const filter = { bookId };
+
+  if (status && typeof status === 'string') {
+    filter.status = status;
+  }
+
+  const safeLimit = Math.max(Math.min(Number(limit) || 10, 100), 1);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const skip = (safePage - 1) * safeLimit;
+
+  const [total, jobs] = await Promise.all([
+    StorybookJob.countDocuments(filter),
+    StorybookJob.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(safeLimit),
+  ]);
+
+  const items = jobs.map((job) => {
     const snapshot = job.toObject({ depopulate: true });
     snapshot.progress = computeJobProgress(snapshot);
 
@@ -1949,6 +1970,11 @@ const listStorybookJobsForBook = async (bookId, limit = 10, options = {}) => {
 
     return snapshot;
   });
+
+  return {
+    total,
+    jobs: items,
+  };
 };
 
 module.exports = {

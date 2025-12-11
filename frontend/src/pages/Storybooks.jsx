@@ -48,6 +48,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api'
 const JOB_HISTORY_LIMIT = 10;
 const DEFAULT_LIBRARY_PAGE_SIZE = 6;
 const LIBRARY_PAGE_SIZE_OPTIONS = [6, 12, 24];
+const GENERATED_JOBS_LIMIT = 10;
 const READY_STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
   { value: 'awaiting', label: 'Awaiting confirmation' },
@@ -2112,9 +2113,13 @@ function Storybooks() {
   const [trainings, setTrainings] = useState([]);
   const [selectedTrainingId, setSelectedTrainingId] = useState('');
   const [storybookJobs, setStorybookJobs] = useState([]);
+  const [generatedJobs, setGeneratedJobs] = useState([]);
+  const [generatedTotal, setGeneratedTotal] = useState(0);
   const [expandedJobIds, setExpandedJobIds] = useState(new Set());
   const [loadedJobDetails, setLoadedJobDetails] = useState(new Map());
-  const [loadingJobIds, setLoadingJobIds] = useState(new Set());
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [runsPage, setRunsPage] = useState(1);
+  const [runsTotal, setRunsTotal] = useState(0);
   const [librarySearchTerm, setLibrarySearchTerm] = useState('');
   const [libraryStatusFilter, setLibraryStatusFilter] = useState('all');
   const [libraryPageSize, setLibraryPageSize] = useState(DEFAULT_LIBRARY_PAGE_SIZE);
@@ -2133,8 +2138,13 @@ function Storybooks() {
   const [applyingCandidateKey, setApplyingCandidateKey] = useState('');
   const [confirmingAssetId, setConfirmingAssetId] = useState('');
   const [confirmedStorybooks, setConfirmedStorybooks] = useState([]);
+  const [isConfirmedOpen, setIsConfirmedOpen] = useState(false);
+  const [confirmedPage, setConfirmedPage] = useState(1);
+  const [confirmedPageSize, setConfirmedPageSize] = useState(10);
   const [removingJobId, setRemovingJobId] = useState('');
   const [removingConfirmedId, setRemovingConfirmedId] = useState('');
+  const [isRecentRunsOpen, setIsRecentRunsOpen] = useState(false);
+  const [loadingGeneratedJobs, setLoadingGeneratedJobs] = useState(false);
   const preloadRefs = useRef([]);
   const hasLoadedInitialDataRef = useRef(false);
 
@@ -2269,6 +2279,66 @@ function Storybooks() {
     []
   );
 
+  const fetchGeneratedStorybooks = useCallback(
+    async (bookId, page, pageSize) => {
+      if (!bookId) {
+        setGeneratedJobs([]);
+        setGeneratedTotal(0);
+        return;
+      }
+
+      const effectiveLimit = Math.max(Number(pageSize) || DEFAULT_LIBRARY_PAGE_SIZE, 1);
+      const effectivePage = Math.max(Number(page) || 1, 1);
+
+      try {
+        setLoadingGeneratedJobs(true);
+        const response = await bookAPI.getStorybookJobs(bookId, {
+          limit: effectiveLimit,
+          page: effectivePage,
+          status: 'succeeded',
+          minimal: true,
+        });
+        if (response?.success === false) {
+          throw new Error(response?.message || 'Failed to load generated storybooks');
+        }
+        const jobs = Array.isArray(response?.data) ? response.data : [];
+        const total =
+          typeof response?.total === 'number' && response.total >= 0
+            ? response.total
+            : 0;
+
+        setGeneratedJobs(jobs.sort(sortByCreatedAtDesc));
+        setGeneratedTotal(total);
+      } catch (error) {
+        toast.error(`Failed to load generated storybooks: ${error.message}`);
+      } finally {
+        setLoadingGeneratedJobs(false);
+      }
+    },
+    []
+  );
+
+  const fetchConfirmedStorybooks = useCallback(
+    async (bookId) => {
+      if (!bookId) {
+        setConfirmedStorybooks([]);
+        return;
+      }
+
+      try {
+        const response = await bookAPI.getConfirmedStorybooks(bookId);
+        if (response?.success === false) {
+          throw new Error(response?.message || 'Failed to load confirmed storybooks');
+        }
+        const items = Array.isArray(response?.data) ? response.data : [];
+        setConfirmedStorybooks(items);
+      } catch (error) {
+        toast.error(`Failed to load confirmed storybooks: ${error.message}`);
+      }
+    },
+    []
+  );
+
 
   const disconnectJobStream = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -2293,52 +2363,96 @@ function Storybooks() {
       handledJobCompletionsRef.current.add(job._id);
 
       toast.success('Storybook automation completed');
+
+      if (selectedBookId) {
+        fetchGeneratedStorybooks(
+          selectedBookId,
+          libraryPage || 1,
+          libraryPageSize || DEFAULT_LIBRARY_PAGE_SIZE
+        );
+      }
     },
-    [fetchBookDetails, selectedBookId]
+    [fetchGeneratedStorybooks, libraryPage, libraryPageSize, selectedBookId]
   );
 
   const applyJobUpdate = useCallback(
     (payload) => {
       if (!payload?._id) return;
-      setStorybookJobs((previous) => upsertJobList(previous, payload));
+      setStorybookJobs((previous) => {
+        // If we are viewing the first page, keep the recent list live.
+        // For other pages, only update jobs that are already present.
+        if (runsPage === 1) {
+          return upsertJobList(previous, payload);
+        }
+        const index = previous.findIndex((job) => job._id === payload._id);
+        if (index === -1) {
+          return previous;
+        }
+        const next = [...previous];
+        next[index] = {
+          ...next[index],
+          ...payload,
+        };
+        return next;
+      });
+      setLoadedJobDetails((previous) => {
+        if (!previous.size || !previous.has(payload._id)) {
+          return previous;
+        }
+        const next = new Map(previous);
+        const current = next.get(payload._id) || {};
+        next.set(payload._id, mergeJobPayload(current, payload));
+        return next;
+      });
       if (payload.status === 'succeeded') {
         handleJobCompletion(payload);
       }
     },
-    [handleJobCompletion]
+    [handleJobCompletion, runsPage]
   );
 
   const fetchStorybookJobs = useCallback(
-    async (bookId) => {
+    async (bookId, page = 1) => {
       if (!bookId) {
         setStorybookJobs([]);
+        setRunsTotal(0);
+        setRunsPage(1);
         handledJobCompletionsRef.current = new Set();
         return;
       }
       try {
+        setLoadingJobs(true);
         const response = await bookAPI.getStorybookJobs(bookId, {
           limit: JOB_HISTORY_LIMIT,
+          page,
         });
         if (response?.success === false) {
           throw new Error(response?.message || 'Failed to load storybook runs');
         }
         const jobs = Array.isArray(response?.data) ? response.data : [];
         setStorybookJobs(jobs.sort(sortByCreatedAtDesc));
+         const total =
+          typeof response?.total === 'number' && response.total >= 0
+            ? response.total
+            : (page - 1) * JOB_HISTORY_LIMIT + jobs.length;
+        setRunsTotal(total);
+        setRunsPage(page);
         handledJobCompletionsRef.current = new Set(
           jobs.filter((job) => job.status === 'succeeded').map((job) => job._id)
         );
       } catch (error) {
         toast.error(`Failed to load storybook runs: ${error.message}`);
+      } finally {
+        setLoadingJobs(false);
       }
     },
     []
   );
 
   const toggleJobExpansion = useCallback(
-    async (jobId) => {
+    (jobId) => {
       const isExpanded = expandedJobIds.has(jobId);
 
-      // Toggle expansion state
       setExpandedJobIds((prev) => {
         const next = new Set(prev);
         if (isExpanded) {
@@ -2349,31 +2463,18 @@ function Storybooks() {
         return next;
       });
 
-      // If expanding and we don't have details yet, fetch them
       if (!isExpanded && !loadedJobDetails.has(jobId)) {
-        setLoadingJobIds((prev) => new Set(prev).add(jobId));
-        try {
-          const response = await bookAPI.getStorybookJob(selectedBookId, jobId);
-          if (response?.success && response.data) {
-            setLoadedJobDetails((prev) => {
-              const next = new Map(prev);
-              next.set(jobId, response.data);
-              return next;
-            });
-          }
-        } catch (error) {
-          console.error('Failed to load job details:', error);
-          toast.error('Failed to load job details');
-        } finally {
-          setLoadingJobIds((prev) => {
-            const next = new Set(prev);
-            next.delete(jobId);
+        const job = storybookJobs.find((item) => item._id === jobId);
+        if (job) {
+          setLoadedJobDetails((prev) => {
+            const next = new Map(prev);
+            next.set(jobId, job);
             return next;
           });
         }
       }
     },
-    [expandedJobIds, loadedJobDetails, selectedBookId]
+    [expandedJobIds, loadedJobDetails, storybookJobs]
   );
 
   const connectJobStream = useCallback(
@@ -2476,27 +2577,22 @@ function Storybooks() {
       setSelectedBook(null);
       setPages([]);
       setStorybookJobs([]);
+      setGeneratedJobs([]);
+      setGeneratedTotal(0);
       setConfirmedStorybooks([]);
+      setExpandedJobIds(new Set());
+      setLoadedJobDetails(new Map());
       handledJobCompletionsRef.current = new Set();
+      setRunsPage(1);
+      setRunsTotal(0);
+      setIsConfirmedOpen(false);
+      setConfirmedPage(1);
+      setIsRecentRunsOpen(false);
       return;
     }
 
     fetchBookDetails(selectedBookId);
-    fetchStorybookJobs(selectedBookId);
     connectJobStream(selectedBookId);
-
-    bookAPI
-      .getConfirmedStorybooks(selectedBookId)
-      .then((response) => {
-        if (response?.success === false) {
-          throw new Error(response?.message || 'Failed to load confirmed storybooks');
-        }
-        const items = Array.isArray(response?.data) ? response.data : [];
-        setConfirmedStorybooks(items);
-      })
-      .catch((error) => {
-        toast.error(`Failed to load confirmed storybooks: ${error.message}`);
-      });
 
     return () => {
       disconnectJobStream();
@@ -2504,10 +2600,33 @@ function Storybooks() {
   }, [
     selectedBookId,
     fetchBookDetails,
-    fetchStorybookJobs,
     connectJobStream,
     disconnectJobStream,
   ]);
+
+  useEffect(() => {
+    if (!selectedBookId || !isRecentRunsOpen) {
+      return;
+    }
+    fetchStorybookJobs(selectedBookId, runsPage);
+  }, [selectedBookId, isRecentRunsOpen, runsPage, fetchStorybookJobs]);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      return;
+    }
+    fetchGeneratedStorybooks(selectedBookId, libraryPage, libraryPageSize);
+  }, [selectedBookId, libraryPage, libraryPageSize, fetchGeneratedStorybooks]);
+
+  useEffect(() => {
+    if (!selectedBookId || !isConfirmedOpen) {
+      return;
+    }
+    if (confirmedStorybooks.length > 0) {
+      return;
+    }
+    fetchConfirmedStorybooks(selectedBookId);
+  }, [selectedBookId, isConfirmedOpen, confirmedStorybooks.length, fetchConfirmedStorybooks]);
 
   useEffect(() => {
     if (!activeAsset) {
@@ -2574,7 +2693,7 @@ function Storybooks() {
   }, [activeAsset, storybookJobs]);
 
   const standardAssets = useMemo(() => {
-    return storybookJobs
+    return generatedJobs
       .filter((job) => job.status === 'succeeded' && job.pdfAsset)
       .map((job) => ({
         ...job.pdfAsset,
@@ -2582,7 +2701,7 @@ function Storybooks() {
       }))
       .slice()
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  }, [storybookJobs]);
+  }, [generatedJobs]);
 
   const splitLookup = useMemo(() => {
     const map = new Map();
@@ -2648,8 +2767,11 @@ function Storybooks() {
     setLibraryPage(1);
   }, [libraryStatusFilter, librarySearchTerm, libraryPageSize]);
 
-  const totalReadyItems = filteredReadyLibrary.length;
-  const totalReadyPages = Math.max(1, Math.ceil(totalReadyItems / libraryPageSize));
+  const totalReadyItems = generatedTotal;
+  const totalReadyPages = Math.max(
+    1,
+    Math.ceil((totalReadyItems || 0) / libraryPageSize)
+  );
 
   useEffect(() => {
     if (libraryPage > totalReadyPages) {
@@ -2658,19 +2780,44 @@ function Storybooks() {
   }, [libraryPage, totalReadyPages]);
 
   const paginatedReadyLibrary = useMemo(() => {
-    const startIndex = (libraryPage - 1) * libraryPageSize;
-    return filteredReadyLibrary.slice(startIndex, startIndex + libraryPageSize);
-  }, [filteredReadyLibrary, libraryPage, libraryPageSize]);
+    // Server-side pagination already limits generatedJobs to the current page.
+    // We still apply local filters (search, split status) on this page.
+    return filteredReadyLibrary;
+  }, [filteredReadyLibrary]);
 
   const readyRangeStart =
     totalReadyItems === 0 ? 0 : (libraryPage - 1) * libraryPageSize + 1;
   const readyRangeEnd =
     totalReadyItems === 0
       ? 0
-      : Math.min(totalReadyItems, readyRangeStart + libraryPageSize - 1);
+      : Math.min(totalReadyItems, readyRangeStart + paginatedReadyLibrary.length - 1);
+
+  const totalConfirmedItems = confirmedStorybooks.length;
+  const totalConfirmedPages = Math.max(1, Math.ceil(totalConfirmedItems / confirmedPageSize));
+
+  useEffect(() => {
+    if (confirmedPage > totalConfirmedPages) {
+      setConfirmedPage(totalConfirmedPages);
+    }
+  }, [confirmedPage, totalConfirmedPages]);
+
+  const paginatedConfirmedStorybooks = useMemo(() => {
+    const startIndex = (confirmedPage - 1) * confirmedPageSize;
+    return confirmedStorybooks.slice(startIndex, startIndex + confirmedPageSize);
+  }, [confirmedStorybooks, confirmedPage, confirmedPageSize]);
+
+  const confirmedRangeStart =
+    totalConfirmedItems === 0 ? 0 : (confirmedPage - 1) * confirmedPageSize + 1;
+  const confirmedRangeEnd =
+    totalConfirmedItems === 0
+      ? 0
+      : Math.min(totalConfirmedItems, confirmedRangeStart + confirmedPageSize - 1);
 
   const totalPages = useMemo(() => pages.length, [pages.length]);
-  const totalStorybooks = useMemo(() => standardAssets.length, [standardAssets.length]);
+  const totalStorybooks = useMemo(
+    () => (generatedTotal && generatedTotal > 0 ? generatedTotal : standardAssets.length),
+    [generatedTotal, standardAssets.length]
+  );
   const totalConfirmedStorybooks = useMemo(
     () => confirmedStorybooks.length,
     [confirmedStorybooks.length]
@@ -2742,13 +2889,26 @@ function Storybooks() {
     }
 
     const pdfPages = Array.isArray(assetSnapshot.pages) ? assetSnapshot.pages : [];
-    const jobForAsset = storybookJobs.find(
+    let jobForAsset = storybookJobs.find(
       (job) =>
         job._id === assetSnapshot.jobId ||
         job._id === assetSnapshot.storybookJobId ||
         job._id === assetSnapshot.storybookJobID
     );
-    const jobPages = jobForAsset && Array.isArray(jobForAsset.pages) ? jobForAsset.pages : [];
+    let jobPages = jobForAsset && Array.isArray(jobForAsset.pages) ? jobForAsset.pages : [];
+
+    if ((!jobForAsset || !jobPages.length) && selectedBookId && assetSnapshot.jobId) {
+      try {
+        const response = await bookAPI.getStorybookJob(selectedBookId, assetSnapshot.jobId);
+        if (response?.success && response.data) {
+          jobForAsset = response.data;
+          jobPages = Array.isArray(jobForAsset.pages) ? jobForAsset.pages : [];
+        }
+      } catch (error) {
+        console.error('Failed to load storybook job for viewer:', error);
+      }
+    }
+
     const mergedPages = mergePdfAndJobPages(pdfPages, jobPages);
 
     setActiveAsset(assetSnapshot);
@@ -3952,7 +4112,11 @@ function Storybooks() {
                   </div>
                 </div>
 
-                {paginatedReadyLibrary.length ? (
+                {loadingGeneratedJobs && !paginatedReadyLibrary.length ? (
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-foreground/55">
+                    Loading generated storybooks...
+                  </div>
+                ) : paginatedReadyLibrary.length ? (
                   <div className="grid gap-3">
                     {paginatedReadyLibrary.map((entry) => {
                       const { asset, matchingSplit, id } = entry;
@@ -4173,306 +4337,466 @@ function Storybooks() {
             </Card>
 
             <Card>
-              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle>Confirmed storybooks</CardTitle>
-                  <CardDescription>
-                    Confirmed PDFs are stored and ready whenever you need them.
-                  </CardDescription>
+              <CardHeader
+                className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between cursor-pointer"
+                onClick={() => setIsConfirmedOpen((prev) => !prev)}
+              >
+                <div className="flex items-center gap-2">
+                  <ChevronDown
+                    className={`h-5 w-5 text-foreground/55 transition-transform ${
+                      isConfirmedOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                  <div>
+                    <CardTitle>Confirmed storybooks</CardTitle>
+                    <CardDescription>
+                      Confirmed PDFs are stored and ready whenever you need them.
+                    </CardDescription>
+                  </div>
                 </div>
                 <Badge variant="success">{totalConfirmedStorybooks} confirmed</Badge>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {confirmedStorybooks.length ? (
-                  confirmedStorybooks.map((asset) => {
-                    const readerProfile = asset.readerId
-                      ? users.find((user) => user._id === String(asset.readerId))
-                      : null;
-                    const readerDisplayName =
-                      asset.readerName || readerProfile?.name || '—';
-                    const readerDisplayEmail = readerProfile?.email || '—';
-                    const readerDisplayGenderRaw =
-                      asset.readerGender || readerProfile?.gender || '';
-                    const readerDisplayGender = normaliseGenderValue(
-                      readerDisplayGenderRaw
-                    );
-                    const readerGenderText = readerDisplayGender
-                      ? readerDisplayGender.charAt(0).toUpperCase() +
-                        readerDisplayGender.slice(1)
-                      : '—';
-                    return (
-                    <div
-                      key={asset._id || asset.key}
-                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="space-y-1">
-                          <p className="font-semibold text-emerald-900">
-                            {asset.title || 'Confirmed storybook'}
-                          </p>
-                          <p className="text-xs text-emerald-800/80">
-                            {(asset.pageCount || pages.length)} pages ·{' '}
-                            {asset.size
-                              ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
-                              : 'Size unknown'}
-                          </p>
-                          <div className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            <span>
-                              Confirmed{' '}
-                              {asset.confirmedAt
-                                ? new Date(asset.confirmedAt).toLocaleString()
-                                : new Date(asset.updatedAt || asset.createdAt || Date.now()).toLocaleString()}
-                            </span>
-                          </div>
-                          <div className="mt-2 space-y-0.5 text-xs text-emerald-800/80">
-                            <p>Reader: {readerDisplayName}</p>
-                            <p>Email: {readerDisplayEmail}</p>
-                            <p>Gender: {readerGenderText}</p>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="gap-1"
-                            onClick={() => window.open(asset.pdfUrl || asset.url, '_blank')}
+              {isConfirmedOpen && (
+                <>
+                  <CardContent className="space-y-3">
+                    {paginatedConfirmedStorybooks.length ? (
+                      paginatedConfirmedStorybooks.map((asset) => {
+                        const readerProfile = asset.readerId
+                          ? users.find((user) => user._id === String(asset.readerId))
+                          : null;
+                        const readerDisplayName =
+                          asset.readerName || readerProfile?.name || '—';
+                        const readerDisplayEmail = readerProfile?.email || '—';
+                        const readerDisplayGenderRaw =
+                          asset.readerGender || readerProfile?.gender || '';
+                        const readerDisplayGender = normaliseGenderValue(
+                          readerDisplayGenderRaw
+                        );
+                        const readerGenderText = readerDisplayGender
+                          ? readerDisplayGender.charAt(0).toUpperCase() +
+                            readerDisplayGender.slice(1)
+                          : '—';
+                        return (
+                          <div
+                            key={asset._id || asset.key}
+                            className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4"
                           >
-                            <Download className="h-4 w-4" />
-                            Download PDF
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="gap-1 text-emerald-900 hover:text-emerald-900"
-                            onClick={async () => {
-                              try {
-                                setRemovingConfirmedId(asset._id);
-                                await bookAPI.deleteConfirmedStorybook(
-                                  selectedBookId,
-                                  asset._id
-                                );
-                                setConfirmedStorybooks((previous) =>
-                                  previous.filter((item) => item._id !== asset._id)
-                                );
-                                toast.success('Removed from confirmed list.');
-                              } catch (error) {
-                                toast.error(`Failed to remove: ${error.message}`);
-                              } finally {
-                                setRemovingConfirmedId('');
-                              }
-                            }}
-                            disabled={removingConfirmedId === asset._id}
-                          >
-                            {removingConfirmedId === asset._id ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Removing…
-                              </>
-                            ) : (
-                              <>
-                                <Trash2 className="h-4 w-4" />
-                                Remove
-                              </>
-                            )}
-                          </Button>
-                        </div>
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="space-y-1">
+                                <p className="font-semibold text-emerald-900">
+                                  {asset.title || 'Confirmed storybook'}
+                                </p>
+                                <p className="text-xs text-emerald-800/80">
+                                  {(asset.pageCount || pages.length)} pages ·{' '}
+                                  {asset.size
+                                    ? `${(asset.size / 1024 / 1024).toFixed(2)} MB`
+                                    : 'Size unknown'}
+                                </p>
+                                <div className="mt-1 flex items-center gap-1 text-xs text-emerald-700">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  <span>
+                                    Confirmed{' '}
+                                    {asset.confirmedAt
+                                      ? new Date(asset.confirmedAt).toLocaleString()
+                                      : new Date(
+                                          asset.updatedAt ||
+                                            asset.createdAt ||
+                                            Date.now()
+                                        ).toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="mt-2 space-y-0.5 text-xs text-emerald-800/80">
+                                  <p>Reader: {readerDisplayName}</p>
+                                  <p>Email: {readerDisplayEmail}</p>
+                                  <p>Gender: {readerGenderText}</p>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="gap-1"
+                                  onClick={() =>
+                                    window.open(asset.pdfUrl || asset.url, '_blank')
+                                  }
+                                >
+                                  <Download className="h-4 w-4" />
+                                  Download PDF
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1 text-emerald-900 hover:text-emerald-900"
+                                  onClick={async () => {
+                                    try {
+                                      setRemovingConfirmedId(asset._id);
+                                      await bookAPI.deleteConfirmedStorybook(
+                                        selectedBookId,
+                                        asset._id
+                                      );
+                                      setConfirmedStorybooks((previous) =>
+                                        previous.filter((item) => item._id !== asset._id)
+                                      );
+                                      toast.success('Removed from confirmed list.');
+                                    } catch (error) {
+                                      toast.error(`Failed to remove: ${error.message}`);
+                                    } finally {
+                                      setRemovingConfirmedId('');
+                                    }
+                                  }}
+                                  disabled={removingConfirmedId === asset._id}
+                                >
+                                  {removingConfirmedId === asset._id ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                      Removing…
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trash2 className="h-4 w-4" />
+                                      Remove
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/10 p-6 text-center text-sm text-emerald-800/80">
+                        Confirm a storybook to pin its PDF here for quick access.
                       </div>
+                    )}
+                  </CardContent>
+                  <CardFooter className="flex flex-col gap-3 border-t border-border/60 bg-card/60 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-emerald-800/80">
+                      {totalConfirmedItems
+                        ? `Showing ${confirmedRangeStart}-${confirmedRangeEnd} of ${totalConfirmedItems}`
+                        : 'No confirmed storybooks yet.'}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => setConfirmedPage((prev) => Math.max(1, prev - 1))}
+                        disabled={confirmedPage <= 1 || totalConfirmedItems === 0}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Prev
+                      </Button>
+                      <span className="text-xs text-emerald-800/80">
+                        Page {Math.min(confirmedPage, totalConfirmedPages)} of{' '}
+                        {totalConfirmedPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() =>
+                          setConfirmedPage((prev) =>
+                            Math.min(totalConfirmedPages, prev + 1)
+                          )
+                        }
+                        disabled={
+                          confirmedPage >= totalConfirmedPages || totalConfirmedItems === 0
+                        }
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
                     </div>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-xl border border-dashed border-emerald-500/40 bg-emerald-500/10 p-6 text-center text-sm text-emerald-800/80">
-                    Confirm a storybook to pin its PDF here for quick access.
-                  </div>
-                )}
-              </CardContent>
+                  </CardFooter>
+                </>
+              )}
             </Card>
 
-            {selectedBook && storybookJobs.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-foreground">
-                      Recent automation runs
-                    </h3>
-                    <p className="text-sm text-foreground/55">
-                      Click any run to expand and view detailed progress. Full details load on demand.
-                    </p>
+            {selectedBook && (
+              <Card>
+                <CardHeader
+                  className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between cursor-pointer"
+                  onClick={() => setIsRecentRunsOpen((prev) => !prev)}
+                >
+                  <div className="flex items-center gap-2">
+                    <ChevronDown
+                      className={`h-5 w-5 text-foreground/55 transition-transform ${
+                        isRecentRunsOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                    <div>
+                      <CardTitle>Recent automation runs</CardTitle>
+                      <CardDescription>
+                        Click to expand and view detailed progress. Full details load on demand.
+                      </CardDescription>
+                    </div>
                   </div>
                   <p className="text-xs text-foreground/45">
-                    Showing up to {JOB_HISTORY_LIMIT} runs
+                    Up to {JOB_HISTORY_LIMIT} runs per page
                   </p>
-                </div>
-                <div className="grid gap-4">
-                  {storybookJobs.map((job) => {
-                const statusMeta = getJobStatusMeta(job.status);
-                const progressValue = Math.max(0, Math.min(100, job.progress || 0));
-                const isExpanded = expandedJobIds.has(job._id);
-                const isLoading = loadingJobIds.has(job._id);
-                const fullJobDetails = loadedJobDetails.get(job._id);
-                const pageCount = job.pageCount ?? (Array.isArray(job.pages) ? job.pages.length : 0);
-
-                return (
-                  <Card key={job._id}>
-                    <CardHeader
-                      className="flex cursor-pointer flex-col gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-muted/30 transition-colors"
-                      onClick={() => toggleJobExpansion(job._id)}
-                    >
-                      <div className="flex items-center gap-3 flex-1">
-                        <ChevronDown
-                          className={`h-5 w-5 text-foreground/55 transition-transform ${
-                            isExpanded ? 'rotate-180' : ''
-                          }`}
-                        />
-                        <div className="space-y-1 flex-1">
-                          <CardTitle className="text-base text-foreground">
-                            {job.title || 'Storybook run'}
-                          </CardTitle>
-                          <CardDescription>
-                            Started {formatTimestamp(job.createdAt)} &middot; {pageCount} pages
-                          </CardDescription>
+                </CardHeader>
+                {isRecentRunsOpen && (
+                  <CardContent className="grid gap-4">
+                    {loadingJobs && !storybookJobs.length ? (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-24" />
+                          <Skeleton className="h-20 w-full" />
+                        </div>
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-20 w-full" />
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className="text-xs text-foreground/55 font-medium">
-                            {Math.round(progressValue)}%
-                          </p>
-                        </div>
-                        <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
-                      </div>
-                    </CardHeader>
+                    ) : storybookJobs.length ? (
+                      storybookJobs.map((job) => {
+                        const statusMeta = getJobStatusMeta(job.status);
+                        const progressValue = Math.max(
+                          0,
+                          Math.min(100, job.progress || 0)
+                        );
+                        const isExpanded = expandedJobIds.has(job._id);
+                        const fullJobDetails = loadedJobDetails.get(job._id);
+                        const pageCount =
+                          job.pageCount ??
+                          (Array.isArray(job.pages) ? job.pages.length : 0);
+                        const readerIdString = job.readerId
+                          ? String(job.readerId)
+                          : job.userId
+                          ? String(job.userId)
+                          : '';
+                        const readerProfile = readerIdString
+                          ? users.find((user) => user._id === readerIdString)
+                          : null;
+                        const readerDisplayName =
+                          job.readerName || readerProfile?.name || '—';
+                        const readerDisplayEmail = readerProfile?.email || '—';
 
-                    {isExpanded && (
-                      <CardContent className="space-y-4 border-t border-border/60">
-                        <div>
-                          <div className="flex items-center justify-between text-xs uppercase tracking-wide text-foreground/55 mb-2">
-                            <span>Progress</span>
-                            <span>{Math.round(progressValue)}%</span>
-                          </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                            <div
-                              className={`h-full rounded-full ${
-                                job.status === 'failed'
-                                  ? 'bg-red-400'
-                                  : job.status === 'succeeded'
-                                  ? 'bg-emerald-400'
-                                  : 'bg-primary'
-                              } transition-all`}
-                              style={{ width: `${progressValue}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {isLoading ? (
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Skeleton className="h-4 w-24" />
-                              <Skeleton className="h-20 w-full" />
-                            </div>
-                            <div className="space-y-2">
-                              <Skeleton className="h-4 w-32" />
-                              <Skeleton className="h-20 w-full" />
-                            </div>
-                          </div>
-                        ) : fullJobDetails ? (
-                          <div className="grid gap-4 lg:grid-cols-2">
-                            <div>
-                              <h4 className="text-sm font-semibold text-foreground">Pages</h4>
-                              <div className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-2">
-                                {Array.isArray(fullJobDetails.pages) && fullJobDetails.pages.length ? (
-                                  fullJobDetails.pages.map((page, pageIndex) => {
-                                    const meta = getPageStatusMeta(page.status);
-                                    const displayNumber = getDisplayPageNumber(
-                                      page.pageType,
-                                      page.order
-                                    );
-                                    const labelSuffix =
-                                      page.pageType === 'cover'
-                                        ? ' (Cover)'
-                                        : page.pageType === 'dedication'
-                                        ? ' (Dedication)'
-                                        : '';
-                                    return (
-                                      <div
-                                        key={`${job._id}-${page.pageId || page.order}`}
-                                        className="flex items-center justify-between rounded border border-border/50 bg-card/40 px-3 py-2"
-                                      >
-                                        <div>
-                                          <p className="text-sm font-medium text-foreground">
-                                            Page {displayNumber}
-                                            {labelSuffix}
-                                          </p>
-                                          <p className="text-xs text-foreground/55">
-                                            {page.prompt?.slice(0, 80) || 'No prompt'}
-                                          </p>
-                                        </div>
-                                        <div className="text-right">
-                                          <p className={`text-xs font-semibold ${meta.tone}`}>
-                                            {meta.label}
-                                          </p>
-                                          <p className="text-xs text-foreground/50">
-                                            {Math.round(page.progress || 0)}%
-                                          </p>
-                                        </div>
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <div className="rounded border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
-                                    No page activity yet
-                                  </div>
-                                )}
+                        return (
+                          <Card key={job._id}>
+                            <CardHeader
+                              className="flex cursor-pointer flex-col gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-muted/30 transition-colors"
+                              onClick={() => toggleJobExpansion(job._id)}
+                            >
+                              <div className="flex items-center gap-3 flex-1">
+                                <ChevronDown
+                                  className={`h-5 w-5 text-foreground/55 transition-transform ${
+                                    isExpanded ? 'rotate-180' : ''
+                                  }`}
+                                />
+                                <div className="space-y-1 flex-1">
+                                  <CardTitle className="text-base text-foreground">
+                                    {job.title || 'Storybook run'}
+                                  </CardTitle>
+                                  <CardDescription>
+                                    Started {formatTimestamp(job.createdAt)} &middot;{' '}
+                                    {pageCount} pages
+                                  </CardDescription>
+                                  <p className="text-xs text-foreground/55">
+                                    Reader: {readerDisplayName} · {readerDisplayEmail}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                            <div>
-                              <h4 className="text-sm font-semibold text-foreground">Recent activity</h4>
-                              <div className="mt-2 space-y-2">
-                                {Array.isArray(fullJobDetails.events) && fullJobDetails.events.length ? (
-                                  fullJobDetails.events.slice(-4).reverse().map((event, idx) => (
+                              <div className="flex items-center gap-3">
+                                <div className="text-right">
+                                  <p className="text-xs text-foreground/55 font-medium">
+                                    {Math.round(progressValue)}%
+                                  </p>
+                                </div>
+                                <Badge variant={statusMeta.variant}>
+                                  {statusMeta.label}
+                                </Badge>
+                              </div>
+                            </CardHeader>
+
+                            {isExpanded && fullJobDetails && (
+                              <CardContent className="space-y-4 border-t border-border/60">
+                                <div>
+                                  <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-wide text-foreground/55">
+                                    <span>Progress</span>
+                                    <span>{Math.round(progressValue)}%</span>
+                                  </div>
+                                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                                     <div
-                                      key={`${job._id}-event-${idx}`}
-                                      className="rounded border border-border/50 bg-card/40 px-3 py-2 text-sm text-foreground/70"
-                                    >
-                                      <p className="font-medium text-foreground">
-                                        {event.message || event.type}
-                                      </p>
-                                      <p className="text-xs text-foreground/55">
-                                        {formatTimestamp(event.timestamp)}
-                                      </p>
+                                      className={`h-full rounded-full ${
+                                        job.status === 'failed'
+                                          ? 'bg-red-400'
+                                          : job.status === 'succeeded'
+                                          ? 'bg-emerald-400'
+                                          : 'bg-primary'
+                                      } transition-all`}
+                                      style={{ width: `${progressValue}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid gap-4 lg:grid-cols-2">
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground">
+                                      Pages
+                                    </h4>
+                                    <div className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-2">
+                                      {Array.isArray(fullJobDetails.pages) &&
+                                      fullJobDetails.pages.length ? (
+                                        fullJobDetails.pages.map((page, pageIndex) => {
+                                          const meta = getPageStatusMeta(page.status);
+                                          const displayNumber = getDisplayPageNumber(
+                                            page.pageType,
+                                            page.order
+                                          );
+                                          const labelSuffix =
+                                            page.pageType === 'cover'
+                                              ? ' (Cover)'
+                                              : page.pageType === 'dedication'
+                                              ? ' (Dedication)'
+                                              : '';
+                                          return (
+                                            <div
+                                              key={`${job._id}-${page.pageId || page.order}`}
+                                              className="flex items-center justify-between rounded border border-border/50 bg-card/40 px-3 py-2"
+                                            >
+                                              <div>
+                                                <p className="text-sm font-medium text-foreground">
+                                                  Page {displayNumber}
+                                                  {labelSuffix}
+                                                </p>
+                                                <p className="text-xs text-foreground/55">
+                                                  {page.prompt?.slice(0, 80) || 'No prompt'}
+                                                </p>
+                                              </div>
+                                              <div className="text-right">
+                                                <p className={`text-xs font-semibold ${meta.tone}`}>
+                                                  {meta.label}
+                                                </p>
+                                                <p className="text-xs text-foreground/50">
+                                                  {Math.round(page.progress || 0)}%
+                                                </p>
+                                              </div>
+                                            </div>
+                                          );
+                                        })
+                                      ) : (
+                                        <div className="rounded border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
+                                          No page activity yet
+                                        </div>
+                                      )}
                                     </div>
-                                  ))
-                                ) : (
-                                  <div className="rounded border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
-                                    Waiting for webhook updates
+                                  </div>
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground">
+                                      Recent activity
+                                    </h4>
+                                    <div className="mt-2 space-y-2">
+                                      {Array.isArray(fullJobDetails.events) &&
+                                      fullJobDetails.events.length ? (
+                                        fullJobDetails.events
+                                          .slice(-4)
+                                          .reverse()
+                                          .map((event, idx) => (
+                                            <div
+                                              key={`${job._id}-event-${idx}`}
+                                              className="rounded border border-border/50 bg-card/40 px-3 py-2 text-sm text-foreground/70"
+                                            >
+                                              <p className="font-medium text-foreground">
+                                                {event.message || event.type}
+                                              </p>
+                                              <p className="text-xs text-foreground/55">
+                                                {formatTimestamp(event.timestamp)}
+                                              </p>
+                                            </div>
+                                          ))
+                                      ) : (
+                                        <div className="rounded border border-dashed border-border/60 px-3 py-2 text-sm text-foreground/55">
+                                          Waiting for webhook updates
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {job.status === 'failed' && job.error && (
+                                  <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                    <span>{job.error}</span>
                                   </div>
                                 )}
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {job.status === 'failed' && job.error && (
-                          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                            <span>{job.error}</span>
-                          </div>
-                        )}
-                        {job.status === 'succeeded' && job.pdfAsset && (
-                          <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-                            Completed • {job.pdfAsset.pageCount} pages • Added to storybook library
-                          </div>
-                        )}
-                      </CardContent>
+                                {job.status === 'succeeded' && job.pdfAsset && (
+                                  <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
+                                    Completed • {job.pdfAsset.pageCount} pages • Added to storybook
+                                    library
+                                  </div>
+                                )}
+                              </CardContent>
+                            )}
+                          </Card>
+                        );
+                      })
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-foreground/55">
+                        No runs found for this book yet.
+                      </div>
                     )}
-                  </Card>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                  </CardContent>
+                )}
+                {isRecentRunsOpen && (
+                  <CardFooter className="flex flex-col gap-3 border-t border-border/60 bg-card/60 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-foreground/55">
+                      {runsTotal
+                        ? `Page ${runsPage} of ${Math.max(
+                            1,
+                            Math.ceil(runsTotal / JOB_HISTORY_LIMIT)
+                          )} (${Math.min(JOB_HISTORY_LIMIT, runsTotal)} per page)`
+                        : 'No runs yet.'}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => setRunsPage((prev) => Math.max(1, prev - 1))}
+                        disabled={runsPage <= 1 || runsTotal === 0 || loadingJobs}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Prev
+                      </Button>
+                      <span className="text-xs text-foreground/55">
+                        Page {runsPage} of{' '}
+                        {Math.max(1, Math.ceil((runsTotal || 0) / JOB_HISTORY_LIMIT))}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() =>
+                          setRunsPage((prev) =>
+                            Math.min(
+                              Math.max(1, Math.ceil((runsTotal || 0) / JOB_HISTORY_LIMIT)),
+                              prev + 1
+                            )
+                          )
+                        }
+                        disabled={
+                          runsTotal === 0 ||
+                          loadingJobs ||
+                          runsPage >= Math.max(
+                            1,
+                            Math.ceil((runsTotal || 0) / JOB_HISTORY_LIMIT)
+                          )
+                        }
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardFooter>
+                )}
+              </Card>
+            )}
           </div>
         )}
       </div>

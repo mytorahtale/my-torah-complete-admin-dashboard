@@ -344,6 +344,7 @@ const storybookJobSchema = new mongoose.Schema(
 
 storybookJobSchema.index({ bookId: 1, createdAt: -1 });
 storybookJobSchema.index({ status: 1, createdAt: -1 });
+storybookJobSchema.index({ bookId: 1, status: 1, createdAt: -1 });
 storybookJobSchema.index({ trainingId: 1 });
 storybookJobSchema.index({ userId: 1 });
 
